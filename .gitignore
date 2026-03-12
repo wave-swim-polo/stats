@@ -1,0 +1,18 @@
+# Never commit the database or secrets
+data/
+*.db
+*.sqlite
+
+# Never commit admin tokens or API keys
+stats_admin_token.txt
+.env
+
+# OS clutter
+.DS_Store
+Thumbs.db
+
+# Editor cruft
+.vscode/
+.idea/
+*.swp
+*.swo
