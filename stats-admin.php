@@ -318,13 +318,14 @@ function reload() {
     else alert('Delete failed: '+(j.error||'Unknown error'));
   };
   window.importPdfToRoster = function(input) {
+    // Delegates to the hoisted importPdfToRoster in the main script
     if (typeof parsePdfToTeams === 'function') {
       parsePdfToTeams(input, function(teams) {
-        if (!teams.length) { alert('⚠️ No players found'); return; }
+        if (!teams || !teams.length) { toast('⚠️ No players found in this PDF.'); return; }
         showTournamentPicker(teams);
       });
     } else {
-      setTimeout(() => window.importPdfToRoster(input), 200);
+      toast('⚠️ Page still loading — please try again.');
     }
   };
 })();
@@ -3385,16 +3386,39 @@ function pdfParseColumn(lines) {
 
 async function parsePdfToTeams(input, callback) {
     const file = input.files[0]; if (!file) return;
-    input.value = '';
+    input.value = ''; // clear after capturing reference — file object remains valid
     toast('⏳ Parsing PDF…', 15000);
-    await loadPdfJs();
 
-    const buf = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    try {
+        await loadPdfJs();
+    } catch(e) {
+        toast('⚠️ Could not load PDF reader. Check your internet connection.');
+        console.error('[PDF] loadPdfJs failed:', e);
+        return;
+    }
+
+    let buf;
+    try {
+        buf = await file.arrayBuffer();
+    } catch(e) {
+        toast('⚠️ Could not read file.');
+        console.error('[PDF] arrayBuffer failed:', e);
+        return;
+    }
+
+    let pdf;
+    try {
+        pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    } catch(e) {
+        toast('⚠️ Could not parse PDF — is it a valid PDF file?');
+        console.error('[PDF] getDocument failed:', e);
+        return;
+    }
 
     let tournamentName = '';
     const allTeams = [];
 
+    try {
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         const page    = await pdf.getPage(pageNum);
         const vp      = page.getViewport({ scale: 1 });
@@ -3411,6 +3435,7 @@ async function parsePdfToTeams(input, callback) {
                 width:    Math.abs(it.width) || 1,
             }));
 
+        console.log(`[PDF] Page ${pageNum}: ${items.length} text items`);
         if (!items.length) continue;
 
         // Grab tournament name from top quarter of page
@@ -3439,6 +3464,11 @@ async function parsePdfToTeams(input, callback) {
             if (rightTeams[i]) allTeams.push(rightTeams[i]);
         }
     }
+    } catch(e) {
+        toast('⚠️ Error reading PDF contents.');
+        console.error('[PDF] page parse error:', e);
+        return;
+    }
 
     toast('');
     if (allTeams.length === 0) {
@@ -3447,6 +3477,7 @@ async function parsePdfToTeams(input, callback) {
         return;
     }
 
+    console.log(`[PDF] Found ${allTeams.length} team(s):`, allTeams.map(t => t.teamName));
     callback(allTeams, tournamentName);
 }
 
@@ -3517,7 +3548,7 @@ async function _proceedAfterTournament() {
 
 async function importPdfToRoster(input) {
     await parsePdfToTeams(input, async (teams) => {
-        if (teams.length === 0) { toast('⚠️ No players found'); return; }
+        if (!teams || teams.length === 0) { toast('⚠️ No players found in this PDF.'); return; }
         showTournamentPicker(teams);
     });
 }
@@ -3534,8 +3565,5 @@ function loadPdfJs() {
     });
 }
 </script>
-</body>
-</html>
-
 </body>
 </html>
