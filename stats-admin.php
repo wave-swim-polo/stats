@@ -1824,7 +1824,7 @@ async function saveAiSettings() {
             <div class="overlay-ttl">Teams Found in PDF</div>
             <button class="btn btn-ghost btn-sm" onclick="document.getElementById('team-picker-overlay').style.display='none'">✕</button>
         </div>
-        <div style="padding:12px 20px 6px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--bdr)">Select the teams you want to import. You can import multiple at once.</div>
+        <div style="padding:12px 20px 6px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--bdr)">Select teams to import. Tap a name to rename it before saving.</div>
         <div id="team-picker-list" style="padding:12px 20px 4px;max-height:320px;overflow-y:auto"></div>
         <div style="padding:12px 20px 16px;border-top:1px solid var(--bdr);display:flex;gap:8px;align-items:center">
             <button class="btn btn-ghost btn-sm" onclick="pickerSelectAll(true)">Select All</button>
@@ -3270,13 +3270,13 @@ let _pickerTeams    = [];
 let _pickerCallback = null; // null = roster import mode, fn = re-import single-select mode
 
 function showTeamPicker(teams, cb) {
-    _pickerTeams    = teams;
+    _pickerTeams    = teams.map(t => ({...t})); // shallow clone so edits don't mutate original
     _pickerCallback = cb;
     const list = document.getElementById('team-picker-list');
 
     if (cb) {
         // Re-import mode: single-click select
-        list.innerHTML = teams.map((t,i) => `
+        list.innerHTML = _pickerTeams.map((t,i) => `
             <div style="padding:12px 14px;border:1px solid var(--bdr);border-radius:10px;margin-bottom:8px;cursor:pointer;transition:background .12s"
                  onmouseover="this.style.background='#f5f7fc'" onmouseout="this.style.background=''"
                  onclick="pickTeamSingle(${i})">
@@ -3284,16 +3284,22 @@ function showTeamPicker(teams, cb) {
                 <div style="font-size:12px;color:var(--muted);margin-top:2px">${t.players.length} players</div>
             </div>`).join('');
     } else {
-        // Roster import mode: checkboxes, all pre-checked
-        list.innerHTML = teams.map((t,i) => `
-            <label style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--bdr);border-radius:10px;margin-bottom:8px;cursor:pointer;transition:background .12s"
-                   onmouseover="this.style.background='#f5f7fc'" onmouseout="this.style.background=''">
-                <input type="checkbox" id="pick-${i}" checked style="width:18px;height:18px;cursor:pointer;accent-color:var(--navy)">
-                <div style="flex:1">
-                    <div style="font-weight:700;font-size:15px">${t.ageGroup ? t.ageGroup+' · ' : ''}${t.teamName}</div>
-                    <div style="font-size:12px;color:var(--muted);margin-top:2px">${t.players.length} players</div>
+        // Roster import mode: checkboxes + inline rename
+        list.innerHTML = _pickerTeams.map((t,i) => `
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1.5px solid var(--bdr);border-radius:10px;margin-bottom:8px;background:var(--sur);transition:border-color .12s"
+                 id="pick-row-${i}">
+                <input type="checkbox" id="pick-${i}" checked style="width:18px;height:18px;flex-shrink:0;cursor:pointer;accent-color:var(--navy)"
+                       onchange="document.getElementById('pick-row-${i}').style.borderColor=this.checked?'var(--bdr)':'#e5e7eb';document.getElementById('pick-name-${i}').style.opacity=this.checked?1:0.4">
+                <div style="flex:1;min-width:0">
+                    <input id="pick-name-${i}" type="text" value="${t.teamName.replace(/"/g,'&quot;')}"
+                           style="width:100%;font-weight:700;font-size:14px;border:none;border-bottom:1.5px solid transparent;background:transparent;color:var(--txt);padding:2px 0;outline:none;transition:border-color .15s"
+                           onfocus="this.style.borderBottomColor='var(--navy)'"
+                           onblur="this.style.borderBottomColor='transparent';_pickerTeams[${i}].teamName=this.value.trim()||_pickerTeams[${i}].teamName"
+                           oninput="_pickerTeams[${i}].teamName=this.value"
+                           placeholder="Team name">
+                    <div style="font-size:11px;color:var(--muted);margin-top:1px">${t.ageGroup ? t.ageGroup+' · ' : ''}${t.players.length} players — click name to rename</div>
                 </div>
-            </label>`).join('');
+            </div>`).join('');
     }
     document.getElementById('team-picker-overlay').style.display = 'flex';
 }
@@ -3310,9 +3316,18 @@ function pickTeamSingle(idx) {
 async function importSelectedTeams() {
     const selected = _pickerTeams.filter((_,i) => { const cb=document.getElementById('pick-'+i); return cb&&cb.checked; });
     if (!selected.length) { toast('⚠️ No teams selected'); return; }
+
+    // Warn on duplicate names
+    const names = selected.map(t => t.teamName.trim().toLowerCase());
+    const dupes = names.filter((n,i) => names.indexOf(n) !== i);
+    if (dupes.length) {
+        toast('⚠️ Two teams have the same name — please rename before importing.');
+        return;
+    }
+
     document.getElementById('team-picker-overlay').style.display = 'none';
     const tournament = _pickerTournament || '';
-    const j = await api({ action:'save_rosters_bulk', teams: selected.map(t=>({name:t.teamName,age_group:t.ageGroup,tournament,players:t.players})) });
+    const j = await api({ action:'save_rosters_bulk', teams: selected.map(t=>({name:t.teamName.trim(),age_group:t.ageGroup,tournament,players:t.players})) });
     if (j.ok) {
         toast('✅ Imported: ' + j.saved.map(s=>s.name+' ('+s.count+')').join(', '));
         setTimeout(() => goto('?t=<?=$T?>&view=rosters'), 900);
