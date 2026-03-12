@@ -3198,7 +3198,7 @@ async function exportPdf(data, scope, teamGoals){
                 doc.line(px+pw*0.65,y+2,px+pw*0.65,y+poolH-2);
                 // Label
                 doc.setFont('helvetica','bold'); doc.setFontSize(7);
-                doc.setTextColor(isFor?...GREEN:...RED);
+                doc.setTextColor(...(isFor ? GREEN : RED));
                 doc.text(label+' ('+pevts.length+')', px+pw/2, y+poolH+4, {align:'center'});
                 // Plot shots
                 for(const e of pevts){
