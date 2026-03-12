@@ -6,7 +6,7 @@ header('Expires: Thu, 01 Jan 1970 00:00:00 GMT');
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -134,7 +134,7 @@ const CSS = `
   .app { display: flex; flex-direction: column; height: 100dvh; max-width: 480px; margin: 0 auto; background: var(--bg); position: relative; overflow: hidden; }
 
   /* ── Nav ── */
-  .nav { display: flex; background: var(--navy); border-top: 3px solid var(--gold); position: relative; z-index: 10; flex-shrink: 0; }
+  .nav { display: flex; background: var(--navy); border-top: 3px solid var(--gold); position: relative; z-index: 10; flex-shrink: 0; padding-bottom: env(safe-area-inset-bottom); }
   .nav-btn { flex: 1; padding: 12px 4px 10px; display: flex; flex-direction: column; align-items: center; gap: 3px; border: none; background: none; color: rgba(255,255,255,0.55); cursor: pointer; font-family: var(--font-body); font-size: 10px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; transition: color 0.15s; }
   .nav-btn.active { color: var(--gold); }
   .nav-btn.active .nav-icon { background: rgba(255,199,44,0.15); }
@@ -256,7 +256,7 @@ const CSS = `
     background: var(--surface);
     border-radius: 20px 20px 0 0;
     display: flex; flex-direction: column;
-    max-height: 88vh;
+    max-height: min(88vh, calc(100dvh - env(safe-area-inset-top) - 60px));
     box-shadow: 0 -4px 40px rgba(0,0,0,0.18);
     animation: slideUp 0.22s cubic-bezier(0.22,1,0.36,1);
   }
@@ -281,8 +281,8 @@ const CSS = `
   .picker-goalie-tag { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; background: var(--gold-dim); color: #5a3e00; padding: 3px 8px; border-radius: 20px; }
   .picker-sep { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); padding: 10px 20px 6px; background: var(--bg); border-bottom: 1px solid var(--border); }
 
-  /* Picker footer */
-  .picker-cancel { padding: 12px 16px; background: var(--surface); border-top: 1px solid var(--border); flex-shrink: 0; }
+  /* Picker footer — always above iPhone home bar */
+  .picker-cancel { padding: 12px 16px; padding-bottom: max(14px, calc(env(safe-area-inset-bottom) + 6px)); background: var(--surface); border-top: 1px solid var(--border); flex-shrink: 0; }
 
   /* ── Toast ── */
   .toast-wrap { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 1100; pointer-events: none; width: 100%; max-width: 480px; display: flex; flex-direction: column; align-items: center; padding-top: 14px; gap: 6px; }
@@ -385,9 +385,17 @@ function App() {
   const hasAi    = !!branding.has_ai;
 
   function handleHomeNav() {
-    update(d => { d.activeGameId = null; });
-    setGoHomeSignal(s => s + 1);
-    setScreen("track");
+    // If we're on another screen, just switch back — never clear an active game
+    if (screen !== "track") {
+      setScreen("track");
+      return;
+    }
+    // Already on track screen: if there's an active game in progress, stay in it
+    // (do nothing — game is already showing)
+    // Only send the "go to game list" signal if there's no active game
+    if (!db.activeGameId) {
+      setGoHomeSignal(s => s + 1);
+    }
   }
 
   return (
@@ -407,6 +415,24 @@ function App() {
           {screen === "setup" && <SetupScreen db={db} update={update} push={push} clubName={clubName} />}
           {screen === "ask"   && <AskScreen clubName={clubName} />}
         </div>
+
+        {/* Active game resume banner — shown when user navigates away mid-game */}
+        {activeGame && screen !== "track" && (
+          <div onClick={() => setScreen("track")} style={{
+            background: "linear-gradient(90deg, #16a34a, #15803d)",
+            color: "#fff", padding: "10px 16px",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            cursor: "pointer", flexShrink: 0, gap: 10,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700 }}>
+              <span style={{ fontSize: 16 }}>🏊</span>
+              Game in progress — tap to return
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, fontFamily: "var(--font-display)", letterSpacing: 1 }}>
+              {activeGame.homeScore ?? 0} – {activeGame.awayScore ?? 0}
+            </div>
+          </div>
+        )}
 
         {/* Nav */}
         <nav className="nav">
