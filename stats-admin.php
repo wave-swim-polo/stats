@@ -1864,6 +1864,126 @@ async function api(body) {
     if (!r.ok) return {ok:false, error:'HTTP '+r.status+': '+text.slice(0,200)};
     try { return JSON.parse(text); } catch(e) { return {ok:false, error:'Bad JSON: '+text.slice(0,200)}; }
 }
+function toast(msg,dur=3000){const t=document.getElementById('toast');t.textContent=msg;t.style.display='block';clearTimeout(t._t);t._t=setTimeout(()=>t.style.display='none',dur);}
+
+// ── Ask Mika ────────────────────────────────────────────────────────────────────
+let _aiScope = 'game';
+
+function setAiScope(s) {
+  _aiScope = s;
+  document.querySelectorAll('.ai-scope-btn').forEach(b => b.classList.toggle('on', b.dataset.scope === s));
+  document.getElementById('ai-sel-game').style.display       = s === 'game'       ? '' : 'none';
+  document.getElementById('ai-sel-tournament').style.display = s === 'tournament' ? '' : 'none';
+}
+
+function setSuggestedQ(btn) {
+  const inp = document.getElementById('ai-question');
+  if (inp) { inp.value = btn.textContent.trim(); inp.focus(); }
+}
+
+async function askData() {
+  const question = document.getElementById('ai-question')?.value?.trim();
+  if (!question) { document.getElementById('ai-question').focus(); return; }
+
+  const body = { action: 'ask_data', question, scope: _aiScope };
+  if (_aiScope === 'game')       body.game_key   = document.getElementById('ai-game-key')?.value || '';
+  if (_aiScope === 'tournament') body.tournament = document.getElementById('ai-tournament')?.value || '';
+
+  const answerWrap = document.getElementById('ai-answer-wrap');
+  const answerEl   = document.getElementById('ai-answer');
+  const metaEl     = document.getElementById('ai-answer-meta');
+  const errorEl    = document.getElementById('ai-error');
+  const btn        = document.getElementById('ai-ask-btn');
+
+  answerWrap.style.display = 'none';
+  errorEl.style.display    = 'none';
+  btn.textContent = '⏳ Thinking…';
+  btn.disabled    = true;
+
+  const t0 = Date.now();
+  const j  = await api(body);
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+
+  btn.textContent = '✨ Ask Mika';
+  btn.disabled    = false;
+
+  if (!j.ok) {
+    errorEl.textContent  = '⚠️ ' + (j.error || 'Something went wrong');
+    errorEl.style.display = '';
+    return;
+  }
+
+  answerEl.textContent  = j.answer || '(no answer returned)';
+  metaEl.textContent    = `Gemini 2.5 Flash · ${elapsed}s · ${j.games_used ?? '?'} game${(j.games_used??0)!==1?'s':''} analysed`;
+  answerWrap.style.display = '';
+}
+
+// ── Voice Input ──────────────────────────────────────────────────────────────
+(function initSpeech() {
+  // Only show mic on touch devices with SpeechRecognition support
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR || !('ontouchstart' in window)) return;
+
+  const micBtn = document.getElementById('ai-mic-btn');
+  if (!micBtn) return;
+  micBtn.style.display = '';  // reveal the button
+
+  let recognition = null;
+  let listening = false;
+
+  micBtn.addEventListener('click', toggleSpeech);
+
+  window.toggleSpeech = function() {
+    if (listening) {
+      recognition?.stop();
+      return;
+    }
+
+    recognition = new SR();
+    recognition.lang = 'en-CA';
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    const inp = document.getElementById('ai-question');
+    const originalPlaceholder = inp.placeholder;
+
+    recognition.onstart = () => {
+      listening = true;
+      micBtn.textContent = '🔴';
+      micBtn.title = 'Tap to stop';
+      inp.value = '';
+      inp.placeholder = 'Listening…';
+      inp.style.outline = '2px solid #ef4444';
+    };
+
+    recognition.onresult = (e) => {
+      const transcript = Array.from(e.results)
+        .map(r => r[0].transcript)
+        .join('');
+      inp.value = transcript;
+    };
+
+    recognition.onend = () => {
+      listening = false;
+      micBtn.textContent = '🎤';
+      micBtn.title = 'Ask by voice';
+      inp.placeholder = originalPlaceholder;
+      inp.style.outline = '';
+      // Focus the input so they can review before tapping Ask
+      if (inp.value.trim()) inp.focus();
+    };
+
+    recognition.onerror = (e) => {
+      listening = false;
+      micBtn.textContent = '🎤';
+      inp.placeholder = originalPlaceholder;
+      inp.style.outline = '';
+      if (e.error !== 'aborted') toast('🎤 ' + (e.error === 'not-allowed' ? 'Mic permission denied' : 'Speech error: ' + e.error));
+    };
+
+    recognition.start();
+  };
+})();
 </script>
 <?php elseif ($view !== 'settings'): ?>
 <script>
@@ -2618,124 +2738,6 @@ async function saveSettings() {
   else toast('Error: ' + (j.error || 'unknown'));
 }
 
-// ── Ask Mika ────────────────────────────────────────────────────────────────────
-let _aiScope = 'game';
-
-function setAiScope(s) {
-  _aiScope = s;
-  document.querySelectorAll('.ai-scope-btn').forEach(b => b.classList.toggle('on', b.dataset.scope === s));
-  document.getElementById('ai-sel-game').style.display       = s === 'game'       ? '' : 'none';
-  document.getElementById('ai-sel-tournament').style.display = s === 'tournament' ? '' : 'none';
-}
-
-function setSuggestedQ(btn) {
-  const inp = document.getElementById('ai-question');
-  if (inp) { inp.value = btn.textContent.trim(); inp.focus(); }
-}
-
-async function askData() {
-  const question = document.getElementById('ai-question')?.value?.trim();
-  if (!question) { document.getElementById('ai-question').focus(); return; }
-
-  const body = { action: 'ask_data', question, scope: _aiScope };
-  if (_aiScope === 'game')       body.game_key   = document.getElementById('ai-game-key')?.value || '';
-  if (_aiScope === 'tournament') body.tournament = document.getElementById('ai-tournament')?.value || '';
-
-  const answerWrap = document.getElementById('ai-answer-wrap');
-  const answerEl   = document.getElementById('ai-answer');
-  const metaEl     = document.getElementById('ai-answer-meta');
-  const errorEl    = document.getElementById('ai-error');
-  const btn        = document.getElementById('ai-ask-btn');
-
-  answerWrap.style.display = 'none';
-  errorEl.style.display    = 'none';
-  btn.textContent = '⏳ Thinking…';
-  btn.disabled    = true;
-
-  const t0 = Date.now();
-  const j  = await api(body);
-  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-
-  btn.textContent = '✨ Ask';
-  btn.disabled    = false;
-
-  if (!j.ok) {
-    errorEl.textContent  = '⚠️ ' + (j.error || 'Something went wrong');
-    errorEl.style.display = '';
-    return;
-  }
-
-  answerEl.textContent  = j.answer || '(no answer returned)';
-  metaEl.textContent    = `Gemini 2.5 Flash · ${elapsed}s · ${j.games_used ?? '?'} game${(j.games_used??0)!==1?'s':''} analysed`;
-  answerWrap.style.display = '';
-}
-
-// ── Voice Input ──────────────────────────────────────────────────────────────
-(function initSpeech() {
-  // Only show mic on touch devices with SpeechRecognition support
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR || !('ontouchstart' in window)) return;
-
-  const micBtn = document.getElementById('ai-mic-btn');
-  if (!micBtn) return;
-  micBtn.style.display = '';  // reveal the button
-
-  let recognition = null;
-  let listening = false;
-
-  micBtn.addEventListener('click', toggleSpeech);
-
-  window.toggleSpeech = function() {
-    if (listening) {
-      recognition?.stop();
-      return;
-    }
-
-    recognition = new SR();
-    recognition.lang = 'en-CA';
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-
-    const inp = document.getElementById('ai-question');
-    const originalPlaceholder = inp.placeholder;
-
-    recognition.onstart = () => {
-      listening = true;
-      micBtn.textContent = '🔴';
-      micBtn.title = 'Tap to stop';
-      inp.value = '';
-      inp.placeholder = 'Listening…';
-      inp.style.outline = '2px solid #ef4444';
-    };
-
-    recognition.onresult = (e) => {
-      const transcript = Array.from(e.results)
-        .map(r => r[0].transcript)
-        .join('');
-      inp.value = transcript;
-    };
-
-    recognition.onend = () => {
-      listening = false;
-      micBtn.textContent = '🎤';
-      micBtn.title = 'Ask by voice';
-      inp.placeholder = originalPlaceholder;
-      inp.style.outline = '';
-      // Focus the input so they can review before tapping Ask
-      if (inp.value.trim()) inp.focus();
-    };
-
-    recognition.onerror = (e) => {
-      listening = false;
-      micBtn.textContent = '🎤';
-      inp.placeholder = originalPlaceholder;
-      inp.style.outline = '';
-      if (e.error !== 'aborted') toast('🎤 ' + (e.error === 'not-allowed' ? 'Mic permission denied' : 'Speech error: ' + e.error));
-    };
-
-    recognition.start();
-  };
-})();
 
 async function api(body){
     try {
