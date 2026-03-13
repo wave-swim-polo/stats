@@ -815,6 +815,27 @@ async function deleteTournament(name){
     const j=await _tourApi({action:'delete_tournament_name',name});
     if(j.ok){location.reload();}else alert('⚠️ '+(j.error||'Failed'));
 }
+function editTournament(btn, oldName) {
+    const row = btn.closest('tr');
+    const nameCell   = row.querySelector('.tour-name-cell');
+    const seasonCell = row.querySelector('.tour-season-cell');
+    const actCell    = row.querySelector('.tour-act-cell');
+    const curName   = nameCell.textContent.trim();
+    const curSeason = seasonCell.textContent.trim().replace('—','');
+    nameCell.innerHTML   = `<input class="inp" style="padding:5px 8px;font-size:13px" value="${curName.replace(/"/g,'&quot;')}" id="edit-tour-name">`;
+    seasonCell.innerHTML = `<input class="inp" style="padding:5px 8px;font-size:13px" value="${curSeason.replace(/"/g,'&quot;')}" id="edit-tour-season" placeholder="e.g. 2026 Season">`;
+    actCell.innerHTML    = `
+        <button class="btn btn-navy btn-sm" onclick="saveTournamentEdit('${oldName.replace(/'/g,"\\'")}')">💾 Save</button>
+        <button class="btn btn-ghost btn-sm" onclick="location.reload()">Cancel</button>`;
+    document.getElementById('edit-tour-name').focus();
+}
+async function saveTournamentEdit(oldName) {
+    const newName  = document.getElementById('edit-tour-name')?.value.trim();
+    const season   = document.getElementById('edit-tour-season')?.value.trim();
+    if (!newName) { alert('⚠️ Tournament name cannot be empty'); return; }
+    const j = await _tourApi({action:'update_tournament_name', old_name:oldName, name:newName, season});
+    if(j.ok){location.reload();}else alert('⚠️ '+(j.error||'Failed'));
+}
 </script>
 <!-- ══ MANAGE TOURNAMENTS ══ -->
 <div style="margin-bottom:18px">
@@ -840,9 +861,12 @@ async function deleteTournament(name){
         <tbody>
         <?php foreach($tournamentNames as $tn): ?>
         <tr>
-            <td style="font-weight:700"><?=htmlspecialchars($tn['name'])?></td>
-            <td style="text-align:left"><?=htmlspecialchars($tn['season']?:'—')?></td>
-            <td><button class="btn btn-danger btn-sm" onclick="deleteTournament('<?=addslashes($tn['name'])?>')">✕</button></td>
+            <td class="tour-name-cell" style="font-weight:700"><?=htmlspecialchars($tn['name'])?></td>
+            <td class="tour-season-cell" style="text-align:left"><?=htmlspecialchars($tn['season']?:'—')?></td>
+            <td class="tour-act-cell" style="text-align:right;white-space:nowrap">
+                <button class="btn btn-ghost btn-sm" onclick="editTournament(this,'<?=addslashes($tn['name'])?>')">✏️ Edit</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteTournament('<?=addslashes($tn['name'])?>')">✕</button>
+            </td>
         </tr>
         <?php endforeach; ?>
         </tbody>
