@@ -28,7 +28,7 @@ $db = getDB();
 $chk = $db->prepare("SELECT id FROM admin_tokens WHERE token=?"); $chk->execute([$token]);
 if (!$chk->fetch()) die('<p style="font:16px sans-serif;padding:40px;color:#ef4444">Invalid token.</p>');
 
-$view = $_GET['view'] ?? 'games';  // games | review | rosters | roster_edit | teams | tournaments | reports | settings
+$view = $_GET['view'] ?? 'games';  // games | review | rosters | roster_edit | teams | tournaments | reports | ask | settings
 $selectedKey   = $_GET['g']  ?? '';
 $selectedRKey  = $_GET['r']  ?? '';
 
@@ -54,7 +54,7 @@ try {
     unset($pr);
 } catch (Exception $e) {} // table may not exist yet on old DBs
 
-// ── Load sidebar data ─────────────────────────────────────────────────────────
+// ── Load published reports ────────────────────────────────────────────────────
 $games = $db->query("
     SELECT g.*, COUNT(s.id) as sub_count,
         GROUP_CONCAT(s.tracker_name||':'||s.is_coach, '|') as trackers
@@ -283,8 +283,9 @@ function reload() {
         <a href="?t=<?=$T?>&view=teams"       class="<?=$view==='teams'?'on':''?>">🏷 Opponents</a>
         <a href="?t=<?=$T?>&view=tournaments" class="<?=$view==='tournaments'?'on':''?>">🏆 Tournaments</a>
         <a href="?t=<?=$T?>&view=reports"     class="<?=$view==='reports'?'on':''?>">📣 Reports</a>
+        <a href="?t=<?=$T?>&view=ask"         class="<?=$view==='ask'?'on':''?>">🤖 Ask Mika</a>
         <a href="?t=<?=$T?>&view=settings"     class="<?=$view==='settings'?'on':'' ?>">⚙️ Settings</a>
-        <a href="https://stats.ottawawaterpolo.com/index.php" target="_blank" style="margin-left:auto;opacity:.7">📱 Front-End ↗</a>
+        <a href="https://stats.ottawawaterpolo.com/" target="_blank" style="margin-left:auto;opacity:.7">📱 Front-End ↗</a>
     </nav>
 </header>
 
@@ -836,9 +837,9 @@ async function deleteTournament(name){
 
 <?php elseif ($view === 'reports'): ?>
 <?php
-$selectedReport = null;
-$selRK = $_GET['rk'] ?? '';
-foreach ($publishedReports as $pr) { if ($pr['report_key'] === $selRK) { $selectedReport = $pr; break; } }
+$approvedGames = array_filter($games, fn($g) => isset($offMap[$g['game_key']]));
+$distinctTournaments = array_unique(array_filter(array_column($approvedGames, 'tournament')));
+sort($distinctTournaments);
 ?>
 <!-- ══ REPORTS ══ -->
 <div style="margin-bottom:18px">
@@ -880,11 +881,7 @@ foreach ($publishedReports as $pr) { if ($pr['report_key'] === $selRK) { $select
             <label class="lbl">Tournament</label>
             <select class="inp" id="rpt-tournament">
                 <option value="">— select a tournament —</option>
-                <?php
-                $approvedGames = array_filter($games, fn($g) => isset($offMap[$g['game_key']]));
-                $distinctTournaments = array_unique(array_filter(array_column($approvedGames, 'tournament')));
-                sort($distinctTournaments);
-                foreach($distinctTournaments as $tn): ?>
+                <?php foreach($distinctTournaments as $tn): ?>
                 <option value="<?=htmlspecialchars($tn)?>"><?=htmlspecialchars($tn)?></option>
                 <?php endforeach; ?>
             </select>
@@ -914,16 +911,16 @@ foreach ($publishedReports as $pr) { if ($pr['report_key'] === $selRK) { $select
             <input class="inp" id="rpt-subtitle" placeholder="e.g. May 17–18, 2026 · 4 games played">
         </div>
 
-        <button class="btn btn-navy" onclick="generateReport()" id="rpt-generate-btn">📊 Generate Preview</button>
+        <button class="btn btn-navy" onclick="generateReport()" id="rpt-generate-btn">📊 Generate Report</button>
         <div id="rpt-preflight" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;font-size:12px;line-height:1.7"></div>
     </div>
 </div>
 
-<!-- ── Report Preview ── -->
+<!-- ── Report ── -->
 <div id="rpt-preview-wrap" style="display:none;margin-bottom:16px">
     <div class="card" style="margin-bottom:12px">
         <div class="card-hdr">
-            <span class="card-ttl" id="rpt-preview-title">Report Preview</span>
+            <span class="card-ttl" id="rpt-preview-title">Report</span>
             <div style="display:flex;gap:8px">
                 <button class="btn btn-ghost btn-sm" onclick="document.getElementById('rpt-preview-wrap').style.display='none'">✕ Close</button>
                 <button class="btn btn-ghost btn-sm" onclick="printReport()">💾 Save as PDF</button>
@@ -936,115 +933,74 @@ foreach ($publishedReports as $pr) { if ($pr['report_key'] === $selRK) { $select
     </div>
 </div>
 
-<!-- ── Ask the Data ── -->
-<?php if(!empty($settings['gemini_api_key'])): ?>
-<div class="card" style="margin-bottom:16px;border:1.5px solid rgba(66,133,244,.3);background:linear-gradient(135deg,rgba(66,133,244,.04),rgba(52,168,83,.04))">
-    <div class="card-hdr" style="border-bottom:1px solid rgba(66,133,244,.15)">
-        <span class="card-ttl">🤖 Ask the Data</span>
-        <span style="font-size:11px;color:var(--muted);font-weight:400">Powered by Gemini 2.5 Flash</span>
-    </div>
-    <div class="card-body">
-        <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6">Ask any question about your stats in plain English. Scoped to approved games only.</div>
-
-        <!-- Scope -->
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-            <button class="btn ai-scope-btn on" data-scope="game"       onclick="setAiScope('game')">Single Game</button>
-            <button class="btn ai-scope-btn"    data-scope="tournament" onclick="setAiScope('tournament')">Tournament</button>
-            <button class="btn ai-scope-btn"    data-scope="all"        onclick="setAiScope('all')">All Games</button>
+<!-- ── Ask Mika teaser ── -->
+<div class="card" style="margin-bottom:16px;border:1.5px solid rgba(66,133,244,.25);background:linear-gradient(135deg,rgba(66,133,244,.03),rgba(52,168,83,.03))">
+    <div class="card-body" style="display:flex;align-items:center;gap:14px;padding:14px 16px">
+        <div style="font-size:32px">🤖</div>
+        <div style="flex:1">
+            <div style="font-weight:700;font-size:14px;color:var(--navy);margin-bottom:2px">Ask Mika</div>
+            <div style="font-size:12px;color:var(--muted)">Ask plain-English questions about your stats — powered by Gemini.</div>
         </div>
-
-        <!-- Game picker -->
-        <div id="ai-sel-game" style="margin-bottom:12px">
-            <label class="lbl">Game</label>
-            <select class="inp" id="ai-game-key">
-                <option value="">— select a game —</option>
-                <?php foreach($games as $g): if(!isset($offMap[$g['game_key']])) continue; ?>
-                <option value="<?=htmlspecialchars($g['game_key'])?>"><?=htmlspecialchars(date('M j Y',strtotime($g['game_date'])).' · '.$g['wave_team'].' vs '.$g['opponent'].($g['tournament']?' ('.$g['tournament'].')':''))?></option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-
-        <!-- Tournament picker -->
-        <div id="ai-sel-tournament" style="margin-bottom:12px;display:none">
-            <label class="lbl">Tournament</label>
-            <select class="inp" id="ai-tournament">
-                <option value="">— select a tournament —</option>
-                <?php foreach($distinctTournaments as $tn): ?>
-                <option value="<?=htmlspecialchars($tn)?>"><?=htmlspecialchars($tn)?></option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-
-        <!-- Question input -->
-        <div style="margin-bottom:12px">
-            <label class="lbl">Your Question</label>
-            <div style="display:flex;gap:8px">
-                <input class="inp" id="ai-question" placeholder="e.g. Who had the most assists? What was our man-up conversion rate?" style="flex:1" onkeydown="if(event.key==='Enter')askData()">
-                <button class="btn btn-ghost" onclick="toggleSpeech()" id="ai-mic-btn" title="Ask by voice" style="white-space:nowrap;display:none">🎤</button>
-                <button class="btn btn-navy" onclick="askData()" id="ai-ask-btn" style="white-space:nowrap">✨ Ask</button>
-            </div>
-        </div>
-
-        <!-- Suggested questions -->
-        <div style="margin-bottom:14px">
-            <div style="font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Suggested</div>
-            <div style="display:flex;flex-wrap:wrap;gap:6px" id="ai-suggestions">
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Who had the most assists?</button>
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">What was our man-up conversion rate?</button>
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Which goalie had the best save percentage?</button>
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">What zone did we score from most?</button>
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Compare first half vs second half shooting.</button>
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Who drew the most kickouts?</button>
-            </div>
-        </div>
-
-        <!-- Answer area -->
-        <div id="ai-answer-wrap" style="display:none">
-            <div style="font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Answer</div>
-            <div id="ai-answer" style="background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.8;white-space:pre-wrap;color:var(--txt)"></div>
-            <div id="ai-answer-meta" style="font-size:11px;color:var(--muted);margin-top:6px;text-align:right"></div>
-        </div>
-        <div id="ai-error" style="display:none;padding:10px 14px;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:8px;font-size:13px;color:#b91c1c"></div>
+        <a href="?t=<?=$T?>&view=ask" class="btn btn-navy btn-sm" style="white-space:nowrap">Open →</a>
     </div>
 </div>
-<?php else: ?>
-<div class="card" style="margin-bottom:16px;opacity:.7">
-    <div class="card-hdr"><span class="card-ttl">🤖 Ask the Data</span></div>
-    <div class="card-body">
-        <div style="font-size:13px;color:var(--muted)">Add a Gemini API key in <a href="<?=vUrl('view=settings&t='.$token)?>" style="color:var(--navy);font-weight:700">⚙️ Settings</a> to enable natural language analysis.</div>
-    </div>
-</div>
-<?php endif; ?>
 
 <!-- ── Published Reports List ── -->
-<div style="margin-top:24px;margin-bottom:10px;font-size:11px;font-weight:700;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase">Published Reports (<?=count($publishedReports)?>)</div>
+<div style="margin-top:28px;margin-bottom:4px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase">
+        Published Reports <span style="background:var(--navy);color:#fff;border-radius:20px;padding:1px 8px;font-size:10px;letter-spacing:0;vertical-align:middle"><?=count($publishedReports)?></span>
+    </div>
+    <?php if(count($publishedReports) > 1): ?>
+    <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+        <span>Sort by</span>
+        <select id="rpt-list-sort" class="inp" style="padding:4px 8px;font-size:12px;width:auto" onchange="sortReportList(this.value)">
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="title">Title A–Z</option>
+            <option value="type">Type</option>
+        </select>
+    </div>
+    <?php endif; ?>
+</div>
 
-<?php if ($selectedReport): ?>
-<div class="card" style="margin-bottom:16px;border:2px solid var(--navy)">
-    <div class="card-hdr">
-        <span class="card-ttl"><?=htmlspecialchars($selectedReport['title'])?></span>
-        <button class="btn btn-danger btn-sm" onclick="deleteReport('<?=addslashes($selectedReport['report_key'])?>')">✕ Delete</button>
+<?php if(empty($publishedReports)): ?>
+<div class="empty" style="margin-top:12px"><div class="empty-ico">📣</div><div style="font-size:15px;font-weight:700;margin-bottom:6px">No reports published yet</div><div>Generate a report above and publish it to end users.</div></div>
+<?php else: ?>
+<div id="rpt-list" style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+<?php foreach($publishedReports as $pr):
+    $rdata = $pr['data'] ?? [];
+    $scope = $rdata['scope'] ?? '—';
+    $gcount = $rdata['gameCount'] ?? 0;
+    $scopeLabel = ['game'=>'Single Game','tournament'=>'Tournament','season'=>'Season'][$scope] ?? ucfirst($scope);
+    $scopeColor = ['game'=>'#0ea5e9','tournament'=>'#f59e0b','season'=>'#8b5cf6'][$scope] ?? '#6b7280';
+    $pubDate = date('M j, Y', strtotime($pr['published_at']));
+    $pubTime = date('g:ia', strtotime($pr['published_at']));
+?>
+<div class="rpt-list-row" data-title="<?=htmlspecialchars(strtolower($pr['title']))?>" data-ts="<?=strtotime($pr['published_at'])?>" data-scope="<?=htmlspecialchars($scope)?>" style="background:var(--surface);border:1px solid var(--bdr);border-radius:12px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer" onclick="toggleRptRow('<?=addslashes($pr['report_key'])?>',this.parentElement)">
+        <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:14px;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><?=htmlspecialchars($pr['title'])?></div>
+            <div style="font-size:11px;color:var(--muted);margin-top:3px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <span style="background:<?=$scopeColor?>;color:#fff;border-radius:20px;padding:1px 8px;font-size:10px;font-weight:700"><?=$scopeLabel?></span>
+                <?php if($gcount): ?><span><?=$gcount?> game<?=$gcount!==1?'s':''?></span><?php endif; ?>
+                <span>Published <?=$pubDate?> at <?=$pubTime?></span>
+                <?php if($rdata['subtitle'] ?? ''): ?><span style="opacity:.65">· <?=htmlspecialchars($rdata['subtitle'])?></span><?php endif; ?>
+            </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();printStoredReport('<?=addslashes($pr['report_key'])?>')" title="Save as PDF">💾 PDF</button>
+            <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteReport('<?=addslashes($pr['report_key'])?>')" title="Delete">✕ Delete</button>
+            <span class="rpt-row-chevron" style="font-size:11px;color:var(--muted);transition:transform .2s;display:inline-block">▼</span>
+        </div>
     </div>
-    <div class="card-body" id="rpt-stored-preview-body">
-        <!-- rendered by JS from stored data -->
-    </div>
-    <div style="padding:0 16px 12px;font-size:11px;color:var(--muted)">
-        Key: <code style="font-family:var(--fm)"><?=htmlspecialchars($selectedReport['report_key'])?></code>
-        · Published <?=date('M j, Y \a\t g:ia', strtotime($selectedReport['published_at']))?>
+    <div id="rpt-body-<?=htmlspecialchars($pr['report_key'])?>" style="display:none;border-top:1px solid var(--bdr);padding:16px;font-size:13px;line-height:1.6">
+        <div class="rpt-body-inner"></div>
     </div>
 </div>
-<script>
-// Store report data for rendering after all JS is loaded
-window._storedReportData = <?=json_encode($selectedReport['data'] ?? [])?>;
-</script>
-<?php elseif (empty($publishedReports)): ?>
-<div class="empty"><div class="empty-ico">📊</div><div style="font-size:15px;font-weight:700;margin-bottom:6px">No reports published yet</div><div>Generate a report above and publish it.</div></div>
-<?php else: ?>
-<div class="banner banner-info" style="margin-bottom:16px">
-    <span>📋</span><div><?=count($publishedReports)?> report<?=count($publishedReports)!==1?'s are':' is'?> published. Select one from the sidebar to view or delete.</div>
+<script>window['_rptStored_<?=addslashes($pr['report_key'])?>']=<?=json_encode($rdata)?>;</script>
+<?php endforeach; ?>
 </div>
 <?php endif; ?>
-
 <script>
 // ── Local helpers (main script loads after this block) ───────────────────────
 const _T = '<?=addslashes($token)?>';
@@ -1059,48 +1015,6 @@ async function api(body) {
     const text = await r.text();
     if (!r.ok) return {ok:false, error:'HTTP '+r.status+': '+text.slice(0,200)};
     try { return JSON.parse(text); } catch(e) { return {ok:false, error:'Bad JSON: '+text.slice(0,200)}; }
-}
-
-// ── Ask the Data (AI) ────────────────────────────────────────────────────────
-let _aiScope = 'game';
-function setAiScope(s) {
-    _aiScope = s;
-    document.querySelectorAll('.ai-scope-btn').forEach(b => b.classList.toggle('on', b.dataset.scope === s));
-    document.getElementById('ai-sel-game').style.display       = s === 'game'       ? '' : 'none';
-    document.getElementById('ai-sel-tournament').style.display = s === 'tournament' ? '' : 'none';
-}
-function setSuggestedQ(btn) {
-    const inp = document.getElementById('ai-question');
-    if (inp) { inp.value = btn.textContent.trim(); inp.focus(); }
-}
-async function askData() {
-    const question = document.getElementById('ai-question')?.value?.trim();
-    if (!question) { document.getElementById('ai-question').focus(); return; }
-    const body = { action: 'ask_data', question, scope: _aiScope };
-    if (_aiScope === 'game')       body.game_key   = document.getElementById('ai-game-key')?.value || '';
-    if (_aiScope === 'tournament') body.tournament = document.getElementById('ai-tournament')?.value || '';
-    const answerWrap = document.getElementById('ai-answer-wrap');
-    const answerEl   = document.getElementById('ai-answer');
-    const metaEl     = document.getElementById('ai-answer-meta');
-    const errorEl    = document.getElementById('ai-error');
-    const askBtn     = document.getElementById('ai-ask-btn');
-    answerWrap.style.display = 'none';
-    errorEl.style.display    = 'none';
-    askBtn.textContent = '⏳ Thinking…';
-    askBtn.disabled    = true;
-    const t0 = Date.now();
-    const j  = await api(body);
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    askBtn.textContent = '✨ Ask';
-    askBtn.disabled    = false;
-    if (!j.ok) {
-        errorEl.textContent   = '⚠️ ' + (j.error || 'Something went wrong');
-        errorEl.style.display = '';
-        return;
-    }
-    answerEl.textContent  = j.answer || '(no answer returned)';
-    metaEl.textContent    = `Gemini 2.5 Flash · ${elapsed}s · ${j.games_used ?? '?'} game${(j.games_used??0)!==1?'s':''} analysed`;
-    answerWrap.style.display = '';
 }
 
 // ── Report scope UI ─────────────────────────────────────────────────────────
@@ -1170,788 +1084,6 @@ document.getElementById('rpt-tournament').addEventListener('change', checkPrefli
 document.getElementById('rpt-season-sel').addEventListener('change', checkPreflight);
 
 // ── Generate report ─────────────────────────────────────────────────────────
-async function generateReport() {
-    const btn = document.getElementById('rpt-generate-btn');
-    const title = document.getElementById('rpt-title').value.trim();
-    if (!title) { toast('⚠️ Enter a report title'); return; }
-
-    let payload = { action: 'get_report_data', scope: _rptScope };
-    if (_rptScope === 'game') {
-        const gk = document.getElementById('rpt-game-key').value;
-        if (!gk) { toast('⚠️ Select a game'); return; }
-        payload.game_key = gk;
-    } else if (_rptScope === 'tournament') {
-        const tn = document.getElementById('rpt-tournament').value;
-        if (!tn) { toast('⚠️ Select a tournament'); return; }
-        payload.tournament = tn;
-    } else {
-        const sn = document.getElementById('rpt-season-sel').value;
-        if (!sn) { toast('⚠️ Select a season'); return; }
-        payload.season = sn;
-    }
-
-    btn.textContent = '⏳ Loading…';
-    btn.disabled = true;
-    const j = await api(payload);
-    btn.textContent = '📊 Generate Preview';
-    btn.disabled = false;
-
-    if (!j.ok) { toast('⚠️ ' + j.error); return; }
-    if (!j.games || j.games.length === 0) { toast('⚠️ No games found for that scope'); return; }
-
-    // Pre-flight: warn about games with no selection
-    const noSelection = j.games.filter(g => g.events_source === 'submission');
-    if (noSelection.length > 0) {
-        const names = noSelection.map(g => `${g.wave_team} vs ${g.opponent} (${g.game_date})`).join('\n');
-        const proceed = confirm(
-            `⚠️ ${noSelection.length} game${noSelection.length>1?'s have':' has'} no submission selected.\n\n` +
-            `${names}\n\nThese will use the best available tracker submission. ` +
-            `\n\nContinue anyway?`
-        );
-        if (!proceed) return;
-    }
-
-    _rptData = crunchReportData(j.games, title, document.getElementById('rpt-subtitle').value.trim(), _rptScope);
-
-    const wrap = document.getElementById('rpt-preview-wrap');
-    document.getElementById('rpt-preview-title').textContent = title;
-    document.getElementById('rpt-preview-body').innerHTML = renderReportHTML(_rptData);
-    wrap.style.display = '';
-    wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-async function publishGeneratedReport() {
-    if (!_rptData) { toast('⚠️ Generate a report first'); return; }
-    const title    = document.getElementById('rpt-title').value.trim();
-    const subtitle = document.getElementById('rpt-subtitle').value.trim();
-    const j = await api({ action: 'publish_report', data: {
-        type: _rptScope, title, subtitle, season: '', data: _rptData
-    }});
-    if (j.ok) { toast('✅ Published!'); setTimeout(() => goto('?t=<?=$T?>&view=reports&rk=' + j.report_key), 700); }
-    else toast('⚠️ ' + j.error);
-}
-
-async function deleteReport(key) {
-    if (!confirm('Delete this report? End users will no longer see it.')) return;
-    const j = await api({ action: 'delete_report', report_key: key });
-    if (j.ok) { toast('✅ Deleted'); setTimeout(() => goto('?t=<?=$T?>&view=reports'), 500); }
-    else toast('⚠️ ' + j.error);
-}
-
-// Add scope button styling
-document.head.insertAdjacentHTML('beforeend', `<style>
-.rpt-scope-btn { background:#f1f5f9; color:var(--txt); border:1px solid var(--bdr); padding:7px 16px; border-radius:6px; font-size:13px; font-weight:600; }
-.rpt-scope-btn.on { background:var(--navy); color:#fff; border-color:var(--navy); }
-.ai-scope-btn { background:#f1f5f9; color:var(--txt); border:1px solid var(--bdr); padding:7px 16px; border-radius:6px; font-size:13px; font-weight:600; }
-.ai-scope-btn.on { background:var(--navy); color:#fff; border-color:var(--navy); }
-</style>`);
-
-// Render stored report now that renderReportHTML is defined
-(function(){
-    const stored = window._storedReportData;
-    const el = document.getElementById('rpt-stored-preview-body');
-    if (el && stored && stored.sections) el.innerHTML = renderReportHTML(stored);
-})();
-</script>
-<?php elseif ($view !== 'settings'): ?>
-<script>
-const _gApiToken = '<?=addslashes($token)?>';
-async function _gApi(body) {
-  const r = await fetch('stats-api.php?t='+encodeURIComponent(_gApiToken)+'&_='+Date.now(), {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({...body, token: _gApiToken})
-  });
-  return r.json();
-}
-window.deleteAbandonedGame = async function(gameKey, label) {
-  if (!confirm('Delete "'+label+'"?\n\nThis game has no submissions and will be permanently removed. This cannot be undone.')) return;
-  const j = await _gApi({action:'delete_game', game_key:gameKey});
-  if (j.ok) location.reload();
-  else alert('⚠️ '+(j.error||'Delete failed'));
-};
-window.quickFinalize = async function(gameKey, subId, trackerName) {
-  if (!confirm('Use '+trackerName+"'s stats as the official record for this game?")) return;
-  const j = await _gApi({action:'select_submission', submission_id:subId});
-  if (j.ok) location.reload();
-  else alert('⚠️ '+(j.error||'Error'));
-};
-window.approveSubmission = async function(subId, trackerName) {
-  if (!confirm('Approve "'+trackerName+'" as the official record for this game?')) return;
-  const j = await _gApi({action:'select_submission', submission_id:subId});
-  if (j.ok) location.reload();
-  else alert('⚠️ '+(j.error||'Approval failed'));
-};
-window.showDeleteAll = function() {
-  const el = document.getElementById('delete-all-overlay');
-  if (el) { document.getElementById('delete-confirm-input').value=''; document.getElementById('confirm-delete-btn').disabled=true; el.style.display='flex'; }
-};
-window.confirmDeleteAll = async function() {
-  const j = await _gApi({action:'delete_all_games'});
-  if (j.ok) location.reload();
-  else alert('⚠️ '+(j.error||'Delete failed'));
-};
-</script>
-<div style="font-size:11px;font-weight:700;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Dashboard</div>
-<div style="font-family:var(--fd);font-size:30px;color:var(--navy);margin-bottom:2px">Ottawa Wave Swim &amp; Polo</div>
-<div style="font-size:13px;color:var(--muted);margin-bottom:20px">Stats Admin · <?=date('l, F j, Y')?></div>
-
-<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:24px">
-    <a href="?t=<?=$T?>&view=rosters" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 10px;background:var(--navy);border-radius:12px;color:#fff;text-decoration:none;transition:filter .15s;text-align:center" onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter=''">
-        <span style="font-size:26px">📋</span>
-        <span style="font-family:var(--fd);font-size:15px;letter-spacing:.3px">Manage Rosters</span>
-        <span style="font-size:11px;opacity:.65"><?=count($rosters)?> saved</span>
-    </a>
-    <a href="?t=<?=$T?>&view=teams" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 10px;background:var(--gold);border-radius:12px;color:#1a2235;text-decoration:none;transition:filter .15s;text-align:center" onmouseover="this.style.filter='brightness(1.08)'" onmouseout="this.style.filter=''">
-        <span style="font-size:26px">🏷</span>
-        <span style="font-family:var(--fd);font-size:15px;letter-spacing:.3px">Manage Opponents</span>
-        <span style="font-size:11px;opacity:.7"><?=count(array_unique(array_column($teamNames,'name')))?> teams</span>
-    </a>
-    <a href="?t=<?=$T?>&view=tournaments" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 10px;background:var(--gold);border-radius:12px;color:#1a2235;text-decoration:none;transition:filter .15s;text-align:center" onmouseover="this.style.filter='brightness(1.08)'" onmouseout="this.style.filter=''">
-        <span style="font-size:26px">🏆</span>
-        <span style="font-family:var(--fd);font-size:15px;letter-spacing:.3px">Manage Tournaments</span>
-        <span style="font-size:11px;opacity:.7"><?=count($tournamentNames)?> listed</span>
-    </a>
-</div>
-
-<?php if(empty($games)) { ?>
-<div class="banner banner-info">
-    <span style="font-size:20px">💡</span>
-    <div><div style="font-weight:700;margin-bottom:3px">Getting started</div>
-    <div style="font-size:12px;color:var(--muted);line-height:1.6">
-        1. Go to <strong>Manage Rosters</strong> and import your team PDFs<br>
-        2. Add team and tournament names so end users can select them<br>
-        3. End users create games directly in the tracker app and submit stats here
-    </div></div>
-</div>
-<?php } else { ?>
-<div class="card">
-    <div class="card-hdr">
-        <span class="card-ttl">Games</span>
-        <span style="font-size:12px;color:var(--muted)"><?=count(array_filter($games,fn($g)=>isset($offMap[$g['game_key']])))?> / <?=count($games)?> finalized</span>
-    </div>
-    <div style="padding:10px 14px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Sort:</span>
-        <button class="btn btn-ghost btn-sm sort-btn on" data-sort="date"   onclick="sortGames('date')">Date ↓</button>
-        <button class="btn btn-ghost btn-sm sort-btn"    data-sort="status" onclick="sortGames('status')">Status</button>
-        <button class="btn btn-ghost btn-sm sort-btn"    data-sort="subs"   onclick="sortGames('subs')">Submissions</button>
-        <button class="btn btn-ghost btn-sm sort-btn"    data-sort="opp"    onclick="sortGames('opp')">Opponent</button>
-    </div>
-    <table class="tbl" id="games-tbl" style="border-collapse:collapse">
-        <thead><tr>
-            <th style="text-align:left;padding-left:14px">Game</th>
-            <th style="text-align:left">Date</th>
-            <th style="text-align:center">Status</th>
-            <th></th>
-        </tr></thead>
-        <tbody id="games-tbody">
-        <?php foreach($games as $g):
-            $fin      = isset($offMap[$g['game_key']]);
-            $subCount = (int)$g['sub_count'];
-            $gameSubs = $allSubs[$g['game_key']] ?? [];
-            $statusVal = $fin ? 'finalized' : ($subCount > 0 ? 'review' : 'empty');
-            // Extract approved sub ID from method field e.g. "selected:42:John Smith"
-            $approvedSubId = null;
-            if ($fin) {
-                $method = $offMap[$g['game_key']] ?? '';
-                if (preg_match('/^selected:(\d+):/', $method, $m)) $approvedSubId = (int)$m[1];
-            }
-        ?>
-        <!-- Game row -->
-        <tr data-date="<?=htmlspecialchars($g['game_date'])?>"
-            data-status="<?=$statusVal?>"
-            data-subs="<?=$subCount?>"
-            data-opp="<?=htmlspecialchars(strtolower($g['opponent']))?>"
-            style="background:<?=$fin?'#f0fff4':($subCount>0?'rgba(245,158,11,.04)':'')?>">
-            <td style="font-weight:700;padding:10px 10px 10px 14px">
-                <div style="color:var(--navy);font-size:14px"><?=htmlspecialchars($g['wave_team'])?> vs <?=htmlspecialchars($g['opponent'])?></div>
-                <?php if($g['tournament']): ?>
-                <div style="font-size:10px;color:var(--muted);font-weight:400;margin-top:1px"><?=htmlspecialchars($g['tournament'])?></div>
-                <?php endif; ?>
-            </td>
-            <td style="font-family:var(--fm);font-size:12px;color:var(--muted);white-space:nowrap"><?=date('M j, Y',strtotime($g['game_date']))?></td>
-            <td style="text-align:center">
-                <?php if($fin): ?>
-                    <span class="pill pill-ok">✅ Finalized</span>
-                <?php elseif($subCount===0): ?>
-                    <span class="pill pill-pend">⏳ Awaiting</span>
-                <?php else: ?>
-                    <span class="pill pill-warn">⚠️ <?=$subCount?> Pending</span>
-                <?php endif; ?>
-            </td>
-            <td style="text-align:right;padding-right:12px;white-space:nowrap">
-                <button class="btn btn-ghost btn-sm" onclick="openGameDrawer('<?=addslashes($g['game_key'])?>')" title="View full stats">👁 View</button>
-                <?php if($fin): ?>
-                <button class="btn btn-ghost btn-sm" onclick="downloadGamePdf('<?=addslashes($g['game_key'])?>','<?=addslashes($g['wave_team'].' vs '.$g['opponent'])?>')" title="Download PDF report">⬇ PDF</button>
-                <button class="btn btn-navy btn-sm" onclick="pushGameReport('<?=addslashes($g['game_key'])?>','<?=addslashes($g['wave_team'].' vs '.$g['opponent'])?>')" title="Publish report to end users">📣 Push</button>
-                <?php endif; ?>
-                <?php if($subCount === 0 && !$fin): ?>
-                <button class="btn btn-sm" style="background:rgba(239,68,68,.08);color:var(--danger);border:1px solid rgba(239,68,68,.25)"
-                    onclick="deleteAbandonedGame('<?=addslashes($g['game_key'])?>','<?=addslashes($g['wave_team'].' vs '.$g['opponent'])?>')" title="Delete — no submissions">🗑</button>
-                <?php endif; ?>
-            </td>
-        </tr>
-        <?php foreach($gameSubs as $s):
-            $initials = implode('', array_map(fn($w)=>strtoupper($w[0]), array_filter(explode(' ', trim($s['tracker_name']??'?')))));
-            $initials = substr($initials, 0, 2) ?: '?';
-            $isApproved = $fin && (string)$approvedSubId === (string)$s['id'];
-            // Pick avatar colour based on first char
-            $avatarColors = ['#3b82f6','#8b5cf6','#ec4899','#f59e0b','#10b981','#06b6d4','#ef4444'];
-            $avatarColor  = $avatarColors[ord($initials[0]) % count($avatarColors)];
-        ?>
-        <!-- Submission sub-row -->
-        <tr style="background:<?=$isApproved?'rgba(22,163,74,.06)':'#fafbfd'?>;border-top:1px solid var(--bdr)">
-            <td style="padding:8px 10px 8px 32px" colspan="1">
-                <div style="display:flex;align-items:center;gap:10px">
-                    <!-- Initials avatar -->
-                    <div style="width:30px;height:30px;border-radius:50%;background:<?=$avatarColor?>;color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;letter-spacing:.5px">
-                        <?=htmlspecialchars($initials)?>
-                    </div>
-                    <div>
-                        <div style="font-size:13px;font-weight:600;color:var(--text)">
-                            <?=htmlspecialchars($s['tracker_name'] ?: 'Unknown')?>
-                            <?php if($s['is_coach']): ?><span style="font-size:10px;background:rgba(0,48,135,.1);color:var(--navy);border-radius:4px;padding:1px 6px;font-weight:700;margin-left:4px">COACH</span><?php endif; ?>
-                            <?php if($isApproved): ?><span style="font-size:10px;background:rgba(22,163,74,.15);color:#15803d;border-radius:4px;padding:1px 6px;font-weight:700;margin-left:4px">✓ APPROVED</span><?php endif; ?>
-                        </div>
-                        <div style="font-size:11px;color:var(--muted);margin-top:1px">
-                            Score: <strong><?=$s['wave_score']??'?'?> – <?=$s['opp_score']??'?'?></strong>
-                            &middot; <?=(int)$s['event_count']?> events
-                        </div>
-                    </div>
-                </div>
-            </td>
-            <td colspan="2"></td>
-            <td style="text-align:right;padding-right:12px;white-space:nowrap">
-                <?php if(!$isApproved): ?>
-                <button class="btn btn-sm" style="background:rgba(22,163,74,.1);color:#15803d;border:1px solid rgba(22,163,74,.3);font-weight:700"
-                    onclick="approveSubmission(<?=$s['id']?>,'<?=addslashes($s['tracker_name']?:'Unknown')?>')"
-                    title="Approve this submission as the official record">
-                    ✓ Approve
-                </button>
-                <?php else: ?>
-                <span style="font-size:11px;color:#15803d;font-weight:700">Official record</span>
-                <?php endif; ?>
-            </td>
-        </tr>
-        <?php endforeach; ?>
-        <?php endforeach; ?>
-        </tbody>
-    </table>
-</div>
-<?php } ?>
-
-<!-- ── Game Detail Drawer ─────────────────────────────────────────────────── -->
-<div id="game-drawer-overlay" onclick="closeGameDrawer()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200"></div>
-<div id="game-drawer" style="display:none;position:fixed;top:0;right:0;width:min(700px,100vw);height:100vh;background:#fff;z-index:201;box-shadow:-4px 0 32px rgba(0,0,0,.18);overflow-y:auto;flex-direction:column">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--bdr);position:sticky;top:0;background:#fff;z-index:1;gap:10px">
-        <div style="min-width:0">
-            <div id="drawer-title" style="font-family:var(--fd);font-size:18px;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
-            <div id="drawer-subtitle" style="font-size:12px;color:var(--muted);margin-top:2px"></div>
-        </div>
-        <div style="display:flex;gap:8px;flex-shrink:0">
-            <button id="drawer-pdf-btn" onclick="printDrawerReport()" class="btn btn-ghost btn-sm" style="display:none">⬇ PDF</button>
-            <button id="drawer-push-btn" onclick="pushDrawerReport()" class="btn btn-navy btn-sm" style="display:none">📣 Push to Users</button>
-            <button onclick="closeGameDrawer()" class="btn btn-ghost btn-sm">✕</button>
-        </div>
-    </div>
-    <div id="drawer-subs" style="padding:14px 20px 0;display:none"></div>
-    <div id="drawer-body" style="padding:20px;font-size:13px;line-height:1.6"></div>
-</div>
-
-<script>
-// ── Sortable games table ─────────────────────────────────────────────────────
-let _sortDir = { date: -1, status: 1, subs: -1, opp: 1 };
-let _sortCur = 'date';
-function sortGames(col) {
-    if (_sortCur === col) _sortDir[col] *= -1;
-    _sortCur = col;
-    document.querySelectorAll('.sort-btn').forEach(b => b.classList.toggle('on', b.dataset.sort === col));
-    const tbody = document.getElementById('games-tbody');
-    const rows  = Array.from(tbody.querySelectorAll('tr'));
-    rows.sort((a, b) => {
-        let av = a.dataset[col], bv = b.dataset[col];
-        if (col === 'subs') return (_sortDir[col]) * (parseInt(bv) - parseInt(av));
-        if (col === 'date') return (_sortDir[col]) * av.localeCompare(bv) * -1;
-        const statusOrder = { finalized: 0, review: 1, empty: 2 };
-        if (col === 'status') return (_sortDir[col]) * ((statusOrder[av]||9) - (statusOrder[bv]||9));
-        return (_sortDir[col]) * av.localeCompare(bv);
-    });
-    rows.forEach(r => tbody.appendChild(r));
-}
-
-// ── Game detail drawer ───────────────────────────────────────────────────────
-let _drawerGameKey = null;
-let _drawerGameData = null;
-
-async function openGameDrawer(gameKey) {
-    _drawerGameKey = gameKey;
-    _drawerGameData = null;
-    const overlay  = document.getElementById('game-drawer-overlay');
-    const drawer   = document.getElementById('game-drawer');
-    const body     = document.getElementById('drawer-body');
-    const subsEl   = document.getElementById('drawer-subs');
-    document.getElementById('drawer-title').textContent    = 'Loading…';
-    document.getElementById('drawer-subtitle').textContent = '';
-    document.getElementById('drawer-pdf-btn').style.display  = 'none';
-    document.getElementById('drawer-push-btn').style.display = 'none';
-    body.innerHTML    = '<div style="color:var(--muted);padding:20px 0;text-align:center">Loading…</div>';
-    subsEl.innerHTML  = '';
-    subsEl.style.display = 'none';
-    overlay.style.display = 'block';
-    drawer.style.display  = 'flex';
-
-    const j = await _gApi({ action: 'get_game_detail', game_key: gameKey });
-    if (!j.ok) { body.innerHTML = '<div style="color:var(--danger)">⚠️ ' + (j.error||'Error loading game') + '</div>'; return; }
-
-    const g    = j.game;
-    const fin  = j.finalized;
-    const subs = j.submissions || [];
-
-    document.getElementById('drawer-title').textContent    = (g.wave_team||'Wave') + ' vs ' + (g.opponent||'Opponent');
-    document.getElementById('drawer-subtitle').textContent = [
-        g.game_date ? new Date(g.game_date+'T12:00:00').toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'}) : '',
-        g.tournament || ''
-    ].filter(Boolean).join(' · ');
-
-    // ── Submissions panel (always shown if there are any) ──
-    if (subs.length > 0) {
-        let sh = `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">Submissions</div>`;
-        subs.forEach(s => {
-            const initials = (s.tracker_name||'?').split(' ').map(w=>w[0]?.toUpperCase()||'').join('').slice(0,2)||'?';
-            const colors   = ['#3b82f6','#8b5cf6','#ec4899','#f59e0b','#10b981','#06b6d4','#ef4444'];
-            const color    = colors[initials.charCodeAt(0) % colors.length];
-            const approved = fin && j.official && j.official.method && j.official.method.includes(':'+s.id+':');
-            sh += `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;background:${approved?'rgba(22,163,74,.05)':'var(--bg)'}">
-                <div style="width:28px;height:28px;border-radius:50%;background:${color};color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0">${initials}</div>
-                <div style="flex:1;min-width:0">
-                    <div style="font-weight:700;font-size:13px">${s.tracker_name||'Unknown'}${s.is_coach?' <span style="font-size:10px;background:rgba(0,48,135,.1);color:var(--navy);border-radius:4px;padding:1px 5px;font-weight:700">COACH</span>':''}${approved?' <span style="font-size:10px;background:rgba(22,163,74,.15);color:#15803d;border-radius:4px;padding:1px 5px;font-weight:700">✓ APPROVED</span>':''}</div>
-                    <div style="font-size:11px;color:var(--muted)">Score: ${s.wave_score||'?'} – ${s.opp_score||'?'} · ${s.event_count||0} events</div>
-                </div>
-                <div style="display:flex;gap:6px;flex-shrink:0">
-                    ${!approved ? `<button class="btn btn-sm" style="background:rgba(22,163,74,.1);color:#15803d;border:1px solid rgba(22,163,74,.3);font-weight:700" onclick="approveSubmission(${s.id},'${(s.tracker_name||'').replace(/'/g,"\\'")}')">✓ Approve</button>` : ''}
-                    <button class="btn btn-sm" style="background:rgba(239,68,68,.06);color:var(--danger);border:1px solid rgba(239,68,68,.2)" onclick="deleteSubmission(${s.id},'${(s.tracker_name||'').replace(/'/g,"\\'")}','${gameKey}')">🗑</button>
-                </div>
-            </div>`;
-        });
-        subsEl.innerHTML     = sh;
-        subsEl.style.display = 'block';
-    }
-
-    // ── Report body ──
-    if (fin && j.official) {
-        document.getElementById('drawer-pdf-btn').style.display  = '';
-        document.getElementById('drawer-push-btn').style.display = '';
-
-        // Build a synthetic single-game structure for crunchReportData
-        const players = g.players || [];
-        const og = j.official;
-        const syntheticGame = [{
-            game_key: gameKey,
-            game_date: g.game_date,
-            opponent: g.opponent,
-            tournament: g.tournament || '',
-            players: players,
-            official_events: og.events || [],
-            wave_score: og.wave_score,
-            opp_score:  og.opp_score,
-        }];
-        const title    = (g.wave_team||'Wave') + ' vs ' + (g.opponent||'Opponent');
-        const subtitle = document.getElementById('drawer-subtitle').textContent;
-        _drawerGameData = crunchReportData(syntheticGame, title, subtitle, 'game');
-        body.innerHTML = renderReportHTML(_drawerGameData);
-    } else if (subs.length > 0) {
-        body.innerHTML = `<div style="text-align:center;padding:30px 20px;color:var(--muted)">
-            <div style="font-size:32px;margin-bottom:10px">⏳</div>
-            <div style="font-weight:700;margin-bottom:4px">Awaiting Approval</div>
-            <div style="font-size:12px">Approve a submission above to generate the full report.</div>
-        </div>`;
-    } else {
-        body.innerHTML = `<div style="text-align:center;padding:30px 20px;color:var(--muted)">
-            <div style="font-size:32px;margin-bottom:10px">📭</div>
-            <div style="font-weight:700;margin-bottom:4px">No Submissions Yet</div>
-            <div style="font-size:12px">No stats have been submitted for this game.</div>
-        </div>`;
-    }
-}
-
-function closeGameDrawer() {
-    document.getElementById('game-drawer-overlay').style.display = 'none';
-    document.getElementById('game-drawer').style.display         = 'none';
-    _drawerGameKey  = null;
-    _drawerGameData = null;
-}
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeGameDrawer(); });
-
-// ── Drawer: Print to PDF ─────────────────────────────────────────────────────
-function printDrawerReport() {
-    if (!_drawerGameData) return;
-    const title   = document.getElementById('drawer-title').textContent;
-    const content = document.getElementById('drawer-body').innerHTML;
-    const win = window.open('', '_blank');
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
-    <style>
-        body{font-family:system-ui,sans-serif;font-size:13px;color:#1a2235;padding:24px;max-width:860px;margin:0 auto}
-        table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}
-        th{background:#003087;color:#fff;padding:6px 10px;text-align:left;font-size:11px}
-        th:not(:first-child):not(:nth-child(2)){text-align:center}
-        td{padding:5px 10px;border-bottom:1px solid #e2e8f0}
-        td:not(:first-child):not(:nth-child(2)){text-align:center}
-        tr:nth-child(even){background:#f8fafc}
-        h2{font-size:15px;color:#003087;border-bottom:2px solid #e2e8f0;padding-bottom:5px;margin:20px 0 10px;text-transform:uppercase;letter-spacing:1px}
-        svg{max-width:100%}
-        @media print{body{padding:0}}
-    </style></head><body>
-    <h1 style="font-size:20px;color:#003087;margin-bottom:2px">${title}</h1>
-    <div style="font-size:12px;color:#64748b;margin-bottom:20px">${document.getElementById('drawer-subtitle').textContent}</div>
-    ${content}
-    <script>window.onload=function(){window.print()}<\/script>
-    </body></html>`);
-    win.document.close();
-}
-
-// ── Game row: direct PDF (opens drawer data or loads fresh) ──────────────────
-async function downloadGamePdf(gameKey, label) {
-    if (_drawerGameKey === gameKey && _drawerGameData) { printDrawerReport(); return; }
-    const j = await _gApi({ action: 'get_game_detail', game_key: gameKey });
-    if (!j.ok || !j.official) { alert('⚠️ No approved stats for this game yet.'); return; }
-    const g = j.game;
-    const syntheticGame = [{
-        game_key: gameKey, game_date: g.game_date, opponent: g.opponent,
-        tournament: g.tournament||'', players: g.players||[],
-        official_events: j.official.events||[], wave_score: j.official.wave_score, opp_score: j.official.opp_score,
-    }];
-    const data = crunchReportData(syntheticGame, label, '', 'game');
-    const win = window.open('', '_blank');
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${label}</title>
-    <style>body{font-family:system-ui,sans-serif;font-size:13px;color:#1a2235;padding:24px;max-width:860px;margin:0 auto}
-    table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}th{background:#003087;color:#fff;padding:6px 10px;text-align:left;font-size:11px}
-    th:not(:first-child):not(:nth-child(2)){text-align:center}td{padding:5px 10px;border-bottom:1px solid #e2e8f0}td:not(:first-child):not(:nth-child(2)){text-align:center}
-    tr:nth-child(even){background:#f8fafc}h2{font-size:15px;color:#003087;border-bottom:2px solid #e2e8f0;padding-bottom:5px;margin:20px 0 10px;text-transform:uppercase;letter-spacing:1px}
-    svg{max-width:100%}@media print{body{padding:0}}</style></head><body>
-    <h1 style="font-size:20px;color:#003087;margin-bottom:20px">${label}</h1>
-    ${renderReportHTML(data)}
-    <script>window.onload=function(){window.print()}<\/script></body></html>`);
-    win.document.close();
-}
-
-// ── Drawer: Push report to end users ─────────────────────────────────────────
-async function pushDrawerReport() {
-    if (!_drawerGameData || !_drawerGameKey) return;
-    const title = document.getElementById('drawer-title').textContent;
-    const sub   = document.getElementById('drawer-subtitle').textContent;
-    const btn   = document.getElementById('drawer-push-btn');
-    btn.disabled = true; btn.textContent = '⏳ Pushing…';
-    const j = await _gApi({ action: 'publish_report', data: {
-        type: 'game', title, subtitle: sub, season: '', data: _drawerGameData
-    }});
-    btn.disabled = false; btn.textContent = '📣 Push to Users';
-    if (j.ok) { btn.textContent = '✅ Pushed!'; setTimeout(()=>btn.textContent='📣 Push to Users', 3000); }
-    else alert('⚠️ ' + (j.error||'Publish failed'));
-}
-
-// ── Game row: push without opening drawer ─────────────────────────────────────
-async function pushGameReport(gameKey, label) {
-    if (!confirm('Publish a report for "'+label+'" to end users?')) return;
-    const j = await _gApi({ action: 'get_game_detail', game_key: gameKey });
-    if (!j.ok || !j.official) { alert('⚠️ No approved stats for this game yet.'); return; }
-    const g = j.game;
-    const syntheticGame = [{
-        game_key: gameKey, game_date: g.game_date, opponent: g.opponent,
-        tournament: g.tournament||'', players: g.players||[],
-        official_events: j.official.events||[], wave_score: j.official.wave_score, opp_score: j.official.opp_score,
-    }];
-    const data = crunchReportData(syntheticGame, label, '', 'game');
-    const r = await _gApi({ action: 'publish_report', data: {
-        type: 'game', title: label, subtitle: '', season: '', data
-    }});
-    if (r.ok) alert('✅ Report published to end users!');
-    else alert('⚠️ ' + (r.error||'Publish failed'));
-}
-
-
-// ── Publish generated report ─────────────────────────────────────────────────
-// ── Delete submission ────────────────────────────────────────────────────────
-window.deleteSubmission = async function(subId, name, gameKey) {
-    if (!confirm('Delete submission from "'+name+'"?\n\nThis cannot be undone.')) return;
-    const j = await _gApi({ action: 'delete_submission', submission_id: subId });
-    if (j.ok) { closeGameDrawer(); location.reload(); }
-    else alert('⚠️ ' + (j.error||'Delete failed'));
-};
-</script>
-
-<?php endif; ?>
-
-<?php if ($view === 'settings'): ?>
-<script>
-async function saveAiSettings() {
-  const key = document.getElementById('s-gemini-key')?.value?.trim() || '';
-  const statusEl = document.getElementById('s-ai-status');
-  if (statusEl) statusEl.textContent = '⏳ Saving…';
-  try {
-    const token = '<?=addslashes($token)?>';
-    const r = await fetch('stats-api.php?t=' + encodeURIComponent(token) + '&_=' + Date.now(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save_settings', token, settings: { gemini_api_key: key } })
-    });
-    const j = await r.json();
-    if (j.ok) {
-      if (statusEl) statusEl.textContent = '✅ Saved! Reload the page to see the status update.';
-      const t = document.getElementById('toast');
-      if (t) { t.textContent = '✅ AI settings saved'; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 3000); }
-    } else {
-      if (statusEl) statusEl.textContent = '⚠️ ' + (j.error || 'Save failed');
-    }
-  } catch(e) {
-    if (statusEl) statusEl.textContent = '⚠️ Network error: ' + e.message;
-  }
-}
-</script>
-<div style="max-width:600px;margin:32px auto;padding:0 20px 40px">
-  <div style="font-family:var(--fd);font-size:28px;color:var(--navy);margin-bottom:4px">⚙️ Branding Settings</div>
-  <div style="font-size:13px;color:var(--muted);margin-bottom:24px">Customise the club name and colours used throughout the app and admin.</div>
-  <div style="background:var(--sur);border:1px solid var(--bdr);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:20px">
-    <div>
-      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Club / Team Name</label>
-      <input class="inp" id="s-club-name" value="<?=$clubName?>" placeholder="e.g. WAVE" style="max-width:320px">
-      <div style="font-size:11px;color:var(--muted);margin-top:5px">Replaces "WAVE" throughout the admin and tracker app.</div>
-    </div>
-    <div>
-      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Primary Colour</label>
-      <div style="display:flex;align-items:center;gap:12px">
-        <input type="color" id="s-primary" value="<?=$colorPri?>" style="width:48px;height:40px;border:none;background:none;cursor:pointer;padding:0">
-        <input class="inp" id="s-primary-hex" value="<?=$colorPri?>" placeholder="#003087" style="max-width:120px;font-family:var(--fm)">
-        <div id="s-primary-preview" style="width:80px;height:40px;border-radius:8px;background:<?=$colorPri?>;border:1px solid var(--bdr)"></div>
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:5px">Used for the header, buttons, and navy accents.</div>
-    </div>
-    <div>
-      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Secondary / Accent Colour</label>
-      <div style="display:flex;align-items:center;gap:12px">
-        <input type="color" id="s-secondary" value="<?=$colorSec?>" style="width:48px;height:40px;border:none;background:none;cursor:pointer;padding:0">
-        <input class="inp" id="s-secondary-hex" value="<?=$colorSec?>" placeholder="#FFC72C" style="max-width:120px;font-family:var(--fm)">
-        <div id="s-secondary-preview" style="width:80px;height:40px;border-radius:8px;background:<?=$colorSec?>;border:1px solid var(--bdr)"></div>
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:5px">Used for gold highlights and active states.</div>
-    </div>
-    <div>
-      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Preview</label>
-      <div id="s-preview-bar" style="height:48px;border-radius:10px;display:flex;align-items:center;padding:0 18px;gap:12px;background:<?=$colorPri?>;border-bottom:3px solid <?=$colorSec?>">
-        <span id="s-preview-title" style="font-family:var(--fd);font-size:22px;color:#fff;letter-spacing:1px"><?=$clubName?> STATS</span>
-        <span id="s-preview-badge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:<?=$colorSec?>;color:#1a2235"><?=$clubName?></span>
-      </div>
-    </div>
-    <button class="btn btn-navy" onclick="saveSettings()" style="align-self:flex-start">&#x1F4BE; Save Settings</button>
-  </div>
-</div>
-
-<!-- ── AI / Gemini Settings ── -->
-<div style="max-width:600px;margin:24px auto;padding:0 20px 40px">
-  <div style="font-family:var(--fd);font-size:22px;color:var(--navy);margin-bottom:4px">🤖 AI Settings</div>
-  <div style="font-size:13px;color:var(--muted);margin-bottom:20px">Powers the "Ask the Data" natural language analysis feature in Reports.</div>
-  <div style="background:var(--sur);border:1px solid var(--bdr);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:20px">
-    <div>
-      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Google Gemini API Key</label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input class="inp" id="s-gemini-key" type="text" value="<?=htmlspecialchars($settings['gemini_api_key'] ?? '')?>" placeholder="AIza…" style="flex:1;font-family:var(--fm)">
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:5px">
-        Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--navy)">aistudio.google.com</a>. Stored securely server-side — never exposed to end users. Model: <code style="font-family:var(--fm)">gemini-2.5-flash</code>.
-      </div>
-    </div>
-    <?php if(!empty($settings['gemini_api_key'])): ?>
-    <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(22,101,52,.07);border:1px solid rgba(22,101,52,.2);border-radius:8px;font-size:12px;color:#166534">
-      ✅ Gemini key is set — Ask the Data is enabled in Reports.
-    </div>
-    <?php else: ?>
-    <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.25);border-radius:8px;font-size:12px;color:#92400e">
-      ⚠️ No key set — Ask the Data will be unavailable in Reports until you add one.
-    </div>
-    <?php endif; ?>
-    <button class="btn btn-navy" onclick="saveAiSettings()" style="align-self:flex-start">&#x1F4BE; Save AI Settings</button>
-    <div id="s-ai-status" style="font-size:12px;color:var(--muted)"></div>
-  </div>
-</div>
-
-<div class="card" style="margin-top:14px;margin-bottom:14px">
-    <div class="card-hdr"><span class="card-ttl">💾 Database Backup</span></div>
-    <div class="card-body">
-        <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Download a full copy of the SQLite database. Keep this somewhere safe — it contains all games, rosters, submissions, and settings.</div>
-        <a href="stats-api.php?t=<?=$token?>&action=download_db" class="btn btn-ghost" style="display:inline-block;text-decoration:none">📥 Download stats.db</a>
-    </div>
-</div>
-
-<div class="card" style="border-color:rgba(239,68,68,.25);margin-top:14px">
-    <div class="card-hdr" style="background:rgba(239,68,68,.04)"><span class="card-ttl" style="color:var(--danger)">⚠️ Danger Zone</span></div>
-    <div class="card-body">
-        <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Permanently delete all games, submissions, and official records. Rosters, team names, and tournament names are kept.</div>
-        <button class="btn btn-danger" onclick="showDeleteAll()">🗑 Delete All Game Data</button>
-    </div>
-</div>
-<?php endif; ?>
-
-</main>
-</div><!-- .layout -->
-
-<div style="text-align:center;padding:14px;font-size:11px;color:var(--muted);border-top:1px solid var(--bdr);background:var(--sur)">
-    Built with <a href="https://claude.ai" target="_blank" style="color:var(--navy);font-weight:700;text-decoration:none">Claude</a> by Anthropic &nbsp;·&nbsp; Ottawa Wave Swim &amp; Polo
-</div>
-
-<!-- ══ PDF Team Picker Overlay ══ -->
-<div id="tournament-picker-overlay" class="overlay" style="display:none" onclick="if(event.target===this)closeTournamentPicker()">
-    <div class="overlay-box" style="max-width:440px">
-        <div class="overlay-hdr">
-            <div class="overlay-ttl">📋 Assign a Tournament</div>
-            <button class="btn btn-ghost btn-sm" onclick="closeTournamentPicker()">✕</button>
-        </div>
-        <div style="padding:14px 20px 6px;font-size:13px;color:var(--muted)">Which tournament are these rosters for? This will be saved with each roster so the tracker can pre-fill it.</div>
-        <div style="padding:10px 20px 4px;display:flex;flex-direction:column;gap:8px;max-height:240px;overflow-y:auto" id="tournament-picker-list"></div>
-        <div style="padding:12px 20px 6px;border-top:1px solid var(--bdr)">
-            <label class="lbl" style="margin-bottom:6px;display:block">Or enter a new tournament name</label>
-            <div style="display:flex;gap:8px">
-                <input class="inp" id="tournament-custom-input" placeholder="e.g. Spring Invitational 2026" style="flex:1;margin:0">
-                <button class="btn btn-navy" onclick="confirmTournamentPicker()">Use This</button>
-            </div>
-        </div>
-        <div style="padding:10px 20px 16px;border-top:1px solid var(--bdr)">
-            <button class="btn btn-out" style="width:100%" onclick="skipTournamentPicker()">Skip / No Tournament</button>
-        </div>
-    </div>
-</div>
-
-<div id="team-picker-overlay" class="overlay" style="display:none" onclick="if(event.target===this)this.style.display='none'">
-    <div class="overlay-box" style="max-width:460px">
-        <div class="overlay-hdr">
-            <div class="overlay-ttl">Teams Found in PDF</div>
-            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('team-picker-overlay').style.display='none'">✕</button>
-        </div>
-        <div style="padding:12px 20px 6px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--bdr)">Select teams to import. Tap a name to rename it before saving.</div>
-        <div id="team-picker-list" style="padding:12px 20px 4px;max-height:320px;overflow-y:auto"></div>
-        <div style="padding:12px 20px 16px;border-top:1px solid var(--bdr);display:flex;gap:8px;align-items:center">
-            <button class="btn btn-ghost btn-sm" onclick="pickerSelectAll(true)">Select All</button>
-            <button class="btn btn-ghost btn-sm" onclick="pickerSelectAll(false)">None</button>
-            <button class="btn btn-navy" style="margin-left:auto" onclick="importSelectedTeams()">✅ Import Selected</button>
-        </div>
-    </div>
-</div>
-
-<!-- ══ Delete All Overlay ══ -->
-<div id="delete-all-overlay" class="overlay" style="display:none" onclick="if(event.target===this)this.style.display='none'">
-    <div class="overlay-box" style="max-width:420px">
-        <div class="overlay-hdr" style="background:rgba(239,68,68,.06)">
-            <div class="overlay-ttl" style="color:var(--danger)">⚠️ Delete All Game Data</div>
-            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('delete-all-overlay').style.display='none'">✕</button>
-        </div>
-        <div style="padding:20px">
-            <div style="background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.25);border-radius:10px;padding:14px;margin-bottom:16px;font-size:13px;line-height:1.6">
-                <strong style="color:var(--danger)">This will permanently delete:</strong><br>
-                • All games<br>• All tracker submissions<br>• All official records<br><br>
-                <strong>Rosters will NOT be deleted.</strong><br>This action cannot be undone.
-            </div>
-            <div class="fg" style="margin-bottom:16px">
-                <label class="lbl">Type <strong>DELETE</strong> to confirm</label>
-                <input class="inp" id="delete-confirm-input" placeholder="DELETE" oninput="document.getElementById('confirm-delete-btn').disabled=this.value!=='DELETE'">
-            </div>
-            <div class="btn-row">
-                <button class="btn btn-danger" id="confirm-delete-btn" disabled onclick="confirmDeleteAll()">🗑 Delete Everything</button>
-                <button class="btn btn-out" onclick="document.getElementById('delete-all-overlay').style.display='none'">Cancel</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- ══ Export Overlay ══ -->
-<div id="export-overlay" class="overlay" style="display:none" onclick="if(event.target===this)this.style.display='none'">
-    <div class="overlay-box" style="max-width:480px">
-        <div class="overlay-hdr">
-            <div class="overlay-ttl">📊 Export Stats</div>
-            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('export-overlay').style.display='none'">✕</button>
-        </div>
-        <div style="padding:20px">
-            <div id="export-scope-info" style="font-size:13px;color:var(--muted);margin-bottom:14px;padding:10px 12px;background:var(--bg);border-radius:8px"></div>
-            <div id="export-game-picker" style="display:none;margin-bottom:14px">
-                <label class="lbl">Select Game</label>
-                <select class="inp sel" id="export-game-select">
-                    <?php foreach($games as $g): ?>
-                    <option value="<?=htmlspecialchars($g['game_key'])?>"><?=htmlspecialchars($g['wave_team'])?> vs <?=htmlspecialchars($g['opponent'])?> — <?=date('M j Y',strtotime($g['game_date']))?></option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div id="export-season-picker" style="display:none;margin-bottom:14px">
-                <label class="lbl">Select Season</label>
-                <select class="inp sel" id="export-season-select">
-                    <?php $seasons=array_unique(array_filter(array_column($games,'season'))); foreach($seasons as $s): ?>
-                    <option value="<?=htmlspecialchars($s)?>"><?=htmlspecialchars($s)?></option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div style="margin-bottom:16px;padding:14px;background:rgba(0,48,135,.04);border:1px solid rgba(0,48,135,.12);border-radius:10px">
-                <div style="font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Goal Attribution</div>
-                <div style="display:flex;gap:8px">
-                    <button id="attr-individual" class="btn btn-navy btn-sm" onclick="setGoalAttr('individual')" style="flex:1">👤 By Player</button>
-                    <button id="attr-team"       class="btn btn-out  btn-sm" onclick="setGoalAttr('team')"       style="flex:1">🏊 By Team Only</button>
-                </div>
-                <div id="attr-note" style="display:none;margin-top:10px;font-size:12px;color:var(--muted);font-style:italic;line-height:1.5">*** Teams score goals. Individual goal scorers are not displayed.</div>
-            </div>
-            <div class="btn-row">
-                <button class="btn btn-navy" onclick="doExport('pdf')">📄 Export PDF</button>
-                <button class="btn btn-ghost" onclick="doExport('excel')">📊 Export Excel</button>
-            </div>
-            <div id="export-status" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>
-        </div>
-    </div>
-</div>
-
-<div id="toast"></div>
-
-<!-- ══ Raw Data Export Overlay ══ -->
-<div id="raw-export-overlay" class="overlay" style="display:none" onclick="if(event.target===this)this.style.display='none'">
-    <div class="overlay-box" style="max-width:460px">
-        <div class="overlay-hdr">
-            <div class="overlay-ttl">📊 Export Raw Data</div>
-            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('raw-export-overlay').style.display='none'">✕</button>
-        </div>
-        <div style="padding:20px">
-            <div id="raw-scope-info" style="font-size:13px;color:var(--muted);margin-bottom:14px;padding:10px 12px;background:var(--bg);border-radius:8px;line-height:1.5"></div>
-
-            <div id="raw-game-picker" style="display:none;margin-bottom:14px">
-                <label class="lbl">Select Game</label>
-                <select class="inp sel" id="raw-game-select">
-                    <?php foreach($games as $g): if(!isset($offMap[$g['game_key']])) continue; ?>
-                    <option value="<?=htmlspecialchars($g['game_key'])?>"><?=htmlspecialchars($g['wave_team'])?> vs <?=htmlspecialchars($g['opponent'])?> — <?=date('M j Y',strtotime($g['game_date']))?><?=$g['tournament']?' · '.htmlspecialchars($g['tournament']):''?></option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-
-            <div id="raw-tournament-picker" style="display:none;margin-bottom:14px">
-                <label class="lbl">Select Tournament</label>
-                <select class="inp sel" id="raw-tournament-select">
-                    <?php
-                    $approvedTournaments = array_unique(array_filter(array_column(array_filter($games, fn($g) => isset($offMap[$g['game_key']])), 'tournament')));
-                    sort($approvedTournaments);
-                    foreach($approvedTournaments as $tn): ?>
-                    <option value="<?=htmlspecialchars($tn)?>"><?=htmlspecialchars($tn)?></option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-
-            <div style="margin-bottom:16px;padding:12px 14px;background:rgba(0,48,135,.04);border:1px solid rgba(0,48,135,.12);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.6">
-                <strong style="color:var(--navy)">Columns included:</strong> Date · Game · Tournament · Age Group · Player · Cap # · Position · Period · Stat · Shot Location
-            </div>
-
-            <div class="btn-row">
-                <button class="btn btn-navy" onclick="doRawExport()">📥 Download Excel</button>
-                <button class="btn btn-out" onclick="document.getElementById('raw-export-overlay').style.display='none'">Cancel</button>
-            </div>
-            <div id="raw-export-status" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>
-        </div>
-    </div>
-</div>
-
-<script>
-const TOKEN = '<?=addslashes($token)?>';
-const CLUB_NAME = '<?=addslashes($settings["club_name"] ?? "WAVE")?>';
-const TOURNAMENT_NAMES = <?=json_encode(array_column($tournamentNames,'name'))?>;
-
 // ── Crunch all stats from games array ──────────────────────────────────────
 function crunchReportData(games, title, subtitle, scope) {
     // Aggregate all events across all games
@@ -2502,6 +1634,935 @@ function printReport() {
     win.document.close();
 }
 
+async function generateReport() {
+    const btn = document.getElementById('rpt-generate-btn');
+    const title = document.getElementById('rpt-title').value.trim();
+    if (!title) { toast('⚠️ Enter a report title'); return; }
+
+    let payload = { action: 'get_report_data', scope: _rptScope };
+    if (_rptScope === 'game') {
+        const gk = document.getElementById('rpt-game-key').value;
+        if (!gk) { toast('⚠️ Select a game'); return; }
+        payload.game_key = gk;
+    } else if (_rptScope === 'tournament') {
+        const tn = document.getElementById('rpt-tournament').value;
+        if (!tn) { toast('⚠️ Select a tournament'); return; }
+        payload.tournament = tn;
+    } else {
+        const sn = document.getElementById('rpt-season-sel').value;
+        if (!sn) { toast('⚠️ Select a season'); return; }
+        payload.season = sn;
+    }
+
+    btn.textContent = '⏳ Loading…';
+    btn.disabled = true;
+    const j = await api(payload);
+    btn.textContent = '📊 Generate Report';
+    btn.disabled = false;
+
+    if (!j.ok) { toast('⚠️ ' + j.error); return; }
+    if (!j.games || j.games.length === 0) { toast('⚠️ No games found for that scope'); return; }
+
+    // Pre-flight: warn about games with no selection
+    const noSelection = j.games.filter(g => g.events_source === 'submission');
+    if (noSelection.length > 0) {
+        const names = noSelection.map(g => `${g.wave_team} vs ${g.opponent} (${g.game_date})`).join('\n');
+        const proceed = confirm(
+            `⚠️ ${noSelection.length} game${noSelection.length>1?'s have':' has'} no submission selected.\n\n` +
+            `${names}\n\nThese will use the best available tracker submission. ` +
+            `\n\nContinue anyway?`
+        );
+        if (!proceed) return;
+    }
+
+    _rptData = crunchReportData(j.games, title, document.getElementById('rpt-subtitle').value.trim(), _rptScope);
+
+    const wrap = document.getElementById('rpt-preview-wrap');
+    document.getElementById('rpt-preview-title').textContent = title;
+    document.getElementById('rpt-preview-body').innerHTML = renderReportHTML(_rptData);
+    wrap.style.display = '';
+    wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function publishGeneratedReport() {
+    if (!_rptData) { toast('⚠️ Generate a report first'); return; }
+    const title    = document.getElementById('rpt-title').value.trim();
+    const subtitle = document.getElementById('rpt-subtitle').value.trim();
+    const j = await api({ action: 'publish_report', data: {
+        type: _rptScope, title, subtitle, season: '', data: _rptData
+    }});
+    if (j.ok) { toast('✅ Published!'); setTimeout(() => goto('?t=<?=$T?>&view=reports&rk=' + j.report_key), 700); }
+    else toast('⚠️ ' + j.error);
+}
+
+async function deleteReport(key) {
+    if (!confirm('Delete this report? End users will no longer see it.')) return;
+    const j = await api({ action: 'delete_report', report_key: key });
+    if (j.ok) { toast('✅ Deleted'); setTimeout(() => goto('?t=<?=$T?>&view=reports'), 500); }
+    else toast('⚠️ ' + j.error);
+}
+
+// Add scope button styling
+document.head.insertAdjacentHTML('beforeend', `<style>
+.rpt-scope-btn { background:#f1f5f9; color:var(--txt); border:1px solid var(--bdr); padding:7px 16px; border-radius:6px; font-size:13px; font-weight:600; }
+.rpt-scope-btn.on { background:var(--navy); color:#fff; border-color:var(--navy); }
+.ai-scope-btn { background:#f1f5f9; color:var(--txt); border:1px solid var(--bdr); padding:7px 16px; border-radius:6px; font-size:13px; font-weight:600; }
+.ai-scope-btn.on { background:var(--navy); color:#fff; border-color:var(--navy); }
+</style>`);
+
+// ── Published report list: expand/collapse, sort, PDF ────────────────────────
+function toggleRptRow(rk, rowEl) {
+    const body    = document.getElementById('rpt-body-' + rk);
+    const chevron = rowEl.querySelector('.rpt-row-chevron');
+    const isOpen  = body.style.display !== 'none';
+    if (isOpen) {
+        body.style.display = 'none';
+        chevron.style.transform = '';
+    } else {
+        const inner = body.querySelector('.rpt-body-inner');
+        if (!inner.innerHTML.trim()) {
+            const data = window['_rptStored_' + rk];
+            inner.innerHTML = data && data.sections ? renderReportHTML(data) : '<p style="color:var(--muted)">No data.</p>';
+        }
+        body.style.display = '';
+        chevron.style.transform = 'rotate(180deg)';
+    }
+}
+
+function sortReportList(mode) {
+    const list = document.getElementById('rpt-list');
+    if (!list) return;
+    const rows = [...list.querySelectorAll('.rpt-list-row')];
+    rows.sort((a, b) => {
+        if (mode === 'newest') return parseInt(b.dataset.ts) - parseInt(a.dataset.ts);
+        if (mode === 'oldest') return parseInt(a.dataset.ts) - parseInt(b.dataset.ts);
+        if (mode === 'title')  return a.dataset.title.localeCompare(b.dataset.title);
+        if (mode === 'type')   return a.dataset.scope.localeCompare(b.dataset.scope);
+        return 0;
+    });
+    rows.forEach(r => list.appendChild(r));
+}
+
+function printStoredReport(rk) {
+    const data = window['_rptStored_' + rk];
+    if (!data) { toast('⚠️ No data for this report'); return; }
+    const title   = data.title || 'Report';
+    const content = renderReportHTML(data);
+    const win = window.open('', '_blank');
+    win.document.write(`<!DOCTYPE html><html><head>
+        <meta charset="utf-8">
+        <title>${title}</title>
+        <style>
+            body { font-family: system-ui, sans-serif; font-size: 13px; color: #1a2235; padding: 24px; max-width: 900px; margin: 0 auto; }
+            table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 8px; }
+            th { background: #003087; color: #fff; padding: 6px 10px; text-align: left; font-size: 11px; }
+            th:not(:first-child):not(:nth-child(2)) { text-align: center; }
+            td { padding: 5px 10px; border-bottom: 1px solid #e2e8f0; }
+            td:not(:first-child):not(:nth-child(2)) { text-align: center; }
+            tr:nth-child(even) { background: #f8fafc; }
+            h2 { font-size: 16px; color: #003087; border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; margin: 20px 0 10px; }
+            svg { max-width: 100%; }
+            @media print { body { padding: 0; } }
+        </style>
+    </head><body>
+        <h1 style="font-size:20px;color:#003087;margin-bottom:4px">${title}</h1>
+        ${content}
+        <script>window.onload = function(){ window.print(); }<\/script>
+    </body></html>`);
+    win.document.close();
+}
+</script>
+<?php elseif ($view === 'ask'): ?>
+<div style="font-family:var(--fd);font-size:28px;color:var(--navy);margin-bottom:4px">🤖 Ask Mika</div>
+<div style="font-size:13px;color:var(--muted);margin-bottom:20px">Ask plain-English questions about your stats. Powered by Gemini 2.5 Flash · Named after Mikasa, the official ball of water polo.</div>
+
+<?php if(!empty($settings['gemini_api_key'])): ?>
+<div class="card" style="border:1.5px solid rgba(66,133,244,.3);background:linear-gradient(135deg,rgba(66,133,244,.04),rgba(52,168,83,.04))">
+    <div class="card-body">
+
+        <!-- Scope -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+            <button class="btn ai-scope-btn on" data-scope="game"       onclick="setAiScope('game')">Single Game</button>
+            <button class="btn ai-scope-btn"    data-scope="tournament" onclick="setAiScope('tournament')">Tournament</button>
+            <button class="btn ai-scope-btn"    data-scope="all"        onclick="setAiScope('all')">All Games</button>
+        </div>
+
+        <!-- Game picker -->
+        <div id="ai-sel-game" style="margin-bottom:12px">
+            <label class="lbl">Game</label>
+            <select class="inp" id="ai-game-key">
+                <option value="">— select a game —</option>
+                <?php foreach($games as $g): if(!isset($offMap[$g['game_key']])) continue; ?>
+                <option value="<?=htmlspecialchars($g['game_key'])?>"><?=htmlspecialchars(date('M j Y',strtotime($g['game_date'])).' · '.$g['wave_team'].' vs '.$g['opponent'].($g['tournament']?' ('.$g['tournament'].')':''))?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+
+        <!-- Tournament picker -->
+        <div id="ai-sel-tournament" style="margin-bottom:12px;display:none">
+            <label class="lbl">Tournament</label>
+            <select class="inp" id="ai-tournament">
+                <option value="">— select a tournament —</option>
+                <?php foreach($distinctTournaments as $tn): ?>
+                <option value="<?=htmlspecialchars($tn)?>"><?=htmlspecialchars($tn)?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+
+        <!-- Question input -->
+        <div style="margin-bottom:12px">
+            <label class="lbl">Your Question</label>
+            <div style="display:flex;gap:8px">
+                <input class="inp" id="ai-question" placeholder="e.g. Who had the most assists? What was our man-up conversion rate?" style="flex:1" onkeydown="if(event.key==='Enter')askData()">
+                <button class="btn btn-ghost" onclick="toggleSpeech()" id="ai-mic-btn" title="Ask by voice" style="white-space:nowrap;display:none">🎤</button>
+                <button class="btn btn-navy" onclick="askData()" id="ai-ask-btn" style="white-space:nowrap">✨ Ask Mika</button>
+            </div>
+        </div>
+
+        <!-- Suggested questions -->
+        <div style="margin-bottom:14px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Suggested</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px" id="ai-suggestions">
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Who had the most assists?</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">What was our man-up conversion rate?</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Which goalie had the best save percentage?</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">What zone did we score from most?</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Compare first half vs second half shooting.</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Who drew the most kickouts?</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">What was our record this season?</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Who was our top scorer overall?</button>
+            </div>
+        </div>
+
+        <!-- Answer area -->
+        <div id="ai-answer-wrap" style="display:none">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Mika says…</div>
+            <div id="ai-answer" style="background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.8;white-space:pre-wrap;color:var(--txt)"></div>
+            <div id="ai-answer-meta" style="font-size:11px;color:var(--muted);margin-top:6px;text-align:right"></div>
+        </div>
+        <div id="ai-error" style="display:none;padding:10px 14px;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:8px;font-size:13px;color:#b91c1c"></div>
+    </div>
+</div>
+<?php else: ?>
+<div class="card" style="opacity:.8">
+    <div class="card-body" style="text-align:center;padding:32px 20px">
+        <div style="font-size:40px;margin-bottom:12px">🤖</div>
+        <div style="font-weight:700;font-size:16px;color:var(--navy);margin-bottom:8px">Mika needs a Gemini key</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Add your Gemini API key in Settings to enable Ask Mika.</div>
+        <a href="?t=<?=$T?>&view=settings" class="btn btn-navy">⚙️ Go to Settings</a>
+    </div>
+</div>
+<?php endif; ?>
+<script>
+const TOKEN = '<?=addslashes($token)?>';
+async function api(body) {
+    const r = await fetch('stats-api.php?t='+encodeURIComponent(TOKEN)+'&_='+Date.now(), {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({...body, token: TOKEN})
+    });
+    const text = await r.text();
+    if (!r.ok) return {ok:false, error:'HTTP '+r.status+': '+text.slice(0,200)};
+    try { return JSON.parse(text); } catch(e) { return {ok:false, error:'Bad JSON: '+text.slice(0,200)}; }
+}
+</script>
+<?php elseif ($view !== 'settings'): ?>
+<script>
+const _gApiToken = '<?=addslashes($token)?>';
+async function _gApi(body) {
+  const r = await fetch('stats-api.php?t='+encodeURIComponent(_gApiToken)+'&_='+Date.now(), {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({...body, token: _gApiToken})
+  });
+  return r.json();
+}
+window.deleteAbandonedGame = async function(gameKey, label) {
+  if (!confirm('Delete "'+label+'"?\n\nThis game has no submissions and will be permanently removed. This cannot be undone.')) return;
+  const j = await _gApi({action:'delete_game', game_key:gameKey});
+  if (j.ok) location.reload();
+  else alert('⚠️ '+(j.error||'Delete failed'));
+};
+window.quickFinalize = async function(gameKey, subId, trackerName) {
+  if (!confirm('Use '+trackerName+"'s stats as the official record for this game?")) return;
+  const j = await _gApi({action:'select_submission', submission_id:subId});
+  if (j.ok) location.reload();
+  else alert('⚠️ '+(j.error||'Error'));
+};
+window.approveSubmission = async function(subId, trackerName) {
+  if (!confirm('Approve "'+trackerName+'" as the official record for this game?')) return;
+  const j = await _gApi({action:'select_submission', submission_id:subId});
+  if (j.ok) location.reload();
+  else alert('⚠️ '+(j.error||'Approval failed'));
+};
+window.showDeleteAll = function() {
+  const el = document.getElementById('delete-all-overlay');
+  if (el) { document.getElementById('delete-confirm-input').value=''; document.getElementById('confirm-delete-btn').disabled=true; el.style.display='flex'; }
+};
+window.confirmDeleteAll = async function() {
+  const j = await _gApi({action:'delete_all_games'});
+  if (j.ok) location.reload();
+  else alert('⚠️ '+(j.error||'Delete failed'));
+};
+</script>
+<div style="font-size:11px;font-weight:700;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Dashboard</div>
+<div style="font-family:var(--fd);font-size:30px;color:var(--navy);margin-bottom:2px">Ottawa Wave Swim &amp; Polo</div>
+<div style="font-size:13px;color:var(--muted);margin-bottom:20px">Stats Admin · <?=date('l, F j, Y')?></div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:24px">
+    <a href="?t=<?=$T?>&view=rosters" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 10px;background:var(--navy);border-radius:12px;color:#fff;text-decoration:none;transition:filter .15s;text-align:center" onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter=''">
+        <span style="font-size:26px">📋</span>
+        <span style="font-family:var(--fd);font-size:15px;letter-spacing:.3px">Manage Rosters</span>
+        <span style="font-size:11px;opacity:.65"><?=count($rosters)?> saved</span>
+    </a>
+    <a href="?t=<?=$T?>&view=teams" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 10px;background:var(--gold);border-radius:12px;color:#1a2235;text-decoration:none;transition:filter .15s;text-align:center" onmouseover="this.style.filter='brightness(1.08)'" onmouseout="this.style.filter=''">
+        <span style="font-size:26px">🏷</span>
+        <span style="font-family:var(--fd);font-size:15px;letter-spacing:.3px">Manage Opponents</span>
+        <span style="font-size:11px;opacity:.7"><?=count(array_unique(array_column($teamNames,'name')))?> teams</span>
+    </a>
+    <a href="?t=<?=$T?>&view=tournaments" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 10px;background:var(--gold);border-radius:12px;color:#1a2235;text-decoration:none;transition:filter .15s;text-align:center" onmouseover="this.style.filter='brightness(1.08)'" onmouseout="this.style.filter=''">
+        <span style="font-size:26px">🏆</span>
+        <span style="font-family:var(--fd);font-size:15px;letter-spacing:.3px">Manage Tournaments</span>
+        <span style="font-size:11px;opacity:.7"><?=count($tournamentNames)?> listed</span>
+    </a>
+</div>
+
+<?php if(empty($games)) { ?>
+<div class="banner banner-info">
+    <span style="font-size:20px">💡</span>
+    <div><div style="font-weight:700;margin-bottom:3px">Getting started</div>
+    <div style="font-size:12px;color:var(--muted);line-height:1.6">
+        1. Go to <strong>Manage Rosters</strong> and import your team PDFs<br>
+        2. Add team and tournament names so end users can select them<br>
+        3. End users create games directly in the tracker app and submit stats here
+    </div></div>
+</div>
+<?php } else { ?>
+<div class="card">
+    <div class="card-hdr">
+        <span class="card-ttl">Games</span>
+        <span style="font-size:12px;color:var(--muted)"><?=count(array_filter($games,fn($g)=>isset($offMap[$g['game_key']])))?> / <?=count($games)?> finalized</span>
+    </div>
+    <div style="padding:10px 14px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Sort:</span>
+        <button class="btn btn-ghost btn-sm sort-btn on" data-sort="date"   onclick="sortGames('date')">Date ↓</button>
+        <button class="btn btn-ghost btn-sm sort-btn"    data-sort="status" onclick="sortGames('status')">Status</button>
+        <button class="btn btn-ghost btn-sm sort-btn"    data-sort="subs"   onclick="sortGames('subs')">Submissions</button>
+        <button class="btn btn-ghost btn-sm sort-btn"    data-sort="opp"    onclick="sortGames('opp')">Opponent</button>
+    </div>
+    <table class="tbl" id="games-tbl" style="border-collapse:collapse">
+        <thead><tr>
+            <th style="text-align:left;padding-left:14px">Game</th>
+            <th style="text-align:left">Date</th>
+            <th style="text-align:center">Status</th>
+            <th></th>
+        </tr></thead>
+        <tbody id="games-tbody">
+        <?php foreach($games as $g):
+            $fin      = isset($offMap[$g['game_key']]);
+            $subCount = (int)$g['sub_count'];
+            $gameSubs = $allSubs[$g['game_key']] ?? [];
+            $statusVal = $fin ? 'finalized' : ($subCount > 0 ? 'review' : 'empty');
+            // Extract approved sub ID from method field e.g. "selected:42:John Smith"
+            $approvedSubId = null;
+            if ($fin) {
+                $method = $offMap[$g['game_key']] ?? '';
+                if (preg_match('/^selected:(\d+):/', $method, $m)) $approvedSubId = (int)$m[1];
+            }
+        ?>
+        <!-- Game row -->
+        <tr data-date="<?=htmlspecialchars($g['game_date'])?>"
+            data-status="<?=$statusVal?>"
+            data-subs="<?=$subCount?>"
+            data-opp="<?=htmlspecialchars(strtolower($g['opponent']))?>"
+            style="background:<?=$fin?'#f0fff4':($subCount>0?'rgba(245,158,11,.04)':'')?>">
+            <td style="font-weight:700;padding:10px 10px 10px 14px">
+                <div style="color:var(--navy);font-size:14px"><?=htmlspecialchars($g['wave_team'])?> vs <?=htmlspecialchars($g['opponent'])?></div>
+                <?php if($g['tournament']): ?>
+                <div style="font-size:10px;color:var(--muted);font-weight:400;margin-top:1px"><?=htmlspecialchars($g['tournament'])?></div>
+                <?php endif; ?>
+            </td>
+            <td style="font-family:var(--fm);font-size:12px;color:var(--muted);white-space:nowrap"><?=date('M j, Y',strtotime($g['game_date']))?></td>
+            <td style="text-align:center">
+                <?php if($fin): ?>
+                    <span class="pill pill-ok">✅ Finalized</span>
+                <?php elseif($subCount===0): ?>
+                    <span class="pill pill-pend">⏳ Awaiting</span>
+                <?php else: ?>
+                    <span class="pill pill-warn">⚠️ <?=$subCount?> Pending</span>
+                <?php endif; ?>
+            </td>
+            <td style="text-align:right;padding-right:12px;white-space:nowrap">
+                <button class="btn btn-ghost btn-sm" onclick="openGameDrawer('<?=addslashes($g['game_key'])?>')" title="View full stats">👁 View</button>
+                <?php if($fin): ?>
+                <button class="btn btn-ghost btn-sm" onclick="downloadGamePdf('<?=addslashes($g['game_key'])?>','<?=addslashes($g['wave_team'].' vs '.$g['opponent'])?>')" title="Download PDF report">⬇ PDF</button>
+                <button class="btn btn-navy btn-sm" onclick="pushGameReport('<?=addslashes($g['game_key'])?>','<?=addslashes($g['wave_team'].' vs '.$g['opponent'])?>')" title="Publish report to end users">📣 Push</button>
+                <?php endif; ?>
+                <?php if($subCount === 0 && !$fin): ?>
+                <button class="btn btn-sm" style="background:rgba(239,68,68,.08);color:var(--danger);border:1px solid rgba(239,68,68,.25)"
+                    onclick="deleteAbandonedGame('<?=addslashes($g['game_key'])?>','<?=addslashes($g['wave_team'].' vs '.$g['opponent'])?>')" title="Delete — no submissions">🗑</button>
+                <?php endif; ?>
+            </td>
+        </tr>
+        <?php foreach($gameSubs as $s):
+            $initials = implode('', array_map(fn($w)=>strtoupper($w[0]), array_filter(explode(' ', trim($s['tracker_name']??'?')))));
+            $initials = substr($initials, 0, 2) ?: '?';
+            $isApproved = $fin && (string)$approvedSubId === (string)$s['id'];
+            // Pick avatar colour based on first char
+            $avatarColors = ['#3b82f6','#8b5cf6','#ec4899','#f59e0b','#10b981','#06b6d4','#ef4444'];
+            $avatarColor  = $avatarColors[ord($initials[0]) % count($avatarColors)];
+        ?>
+        <!-- Submission sub-row -->
+        <tr style="background:<?=$isApproved?'rgba(22,163,74,.06)':'#fafbfd'?>;border-top:1px solid var(--bdr)">
+            <td style="padding:8px 10px 8px 32px" colspan="1">
+                <div style="display:flex;align-items:center;gap:10px">
+                    <!-- Initials avatar -->
+                    <div style="width:30px;height:30px;border-radius:50%;background:<?=$avatarColor?>;color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;letter-spacing:.5px">
+                        <?=htmlspecialchars($initials)?>
+                    </div>
+                    <div>
+                        <div style="font-size:13px;font-weight:600;color:var(--text)">
+                            <?=htmlspecialchars($s['tracker_name'] ?: 'Unknown')?>
+                            <?php if($s['is_coach']): ?><span style="font-size:10px;background:rgba(0,48,135,.1);color:var(--navy);border-radius:4px;padding:1px 6px;font-weight:700;margin-left:4px">COACH</span><?php endif; ?>
+                            <?php if($isApproved): ?><span style="font-size:10px;background:rgba(22,163,74,.15);color:#15803d;border-radius:4px;padding:1px 6px;font-weight:700;margin-left:4px">✓ APPROVED</span><?php endif; ?>
+                        </div>
+                        <div style="font-size:11px;color:var(--muted);margin-top:1px">
+                            Score: <strong><?=$s['wave_score']??'?'?> – <?=$s['opp_score']??'?'?></strong>
+                            &middot; <?=(int)$s['event_count']?> events
+                        </div>
+                    </div>
+                </div>
+            </td>
+            <td colspan="2"></td>
+            <td style="text-align:right;padding-right:12px;white-space:nowrap">
+                <?php if(!$isApproved): ?>
+                <button class="btn btn-sm" style="background:rgba(22,163,74,.1);color:#15803d;border:1px solid rgba(22,163,74,.3);font-weight:700"
+                    onclick="approveSubmission(<?=$s['id']?>,'<?=addslashes($s['tracker_name']?:'Unknown')?>')"
+                    title="Approve this submission as the official record">
+                    ✓ Approve
+                </button>
+                <?php else: ?>
+                <span style="font-size:11px;color:#15803d;font-weight:700">Official record</span>
+                <?php endif; ?>
+            </td>
+        </tr>
+        <?php endforeach; ?>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
+<?php } ?>
+
+<!-- ── Game Detail Drawer ─────────────────────────────────────────────────── -->
+<div id="game-drawer-overlay" onclick="closeGameDrawer()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200"></div>
+<div id="game-drawer" style="display:none;position:fixed;top:0;right:0;width:min(700px,100vw);height:100vh;background:#fff;z-index:201;box-shadow:-4px 0 32px rgba(0,0,0,.18);overflow-y:auto;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--bdr);position:sticky;top:0;background:#fff;z-index:1;gap:10px">
+        <div style="min-width:0">
+            <div id="drawer-title" style="font-family:var(--fd);font-size:18px;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+            <div id="drawer-subtitle" style="font-size:12px;color:var(--muted);margin-top:2px"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0">
+            <button id="drawer-pdf-btn" onclick="printDrawerReport()" class="btn btn-ghost btn-sm" style="display:none">⬇ PDF</button>
+            <button id="drawer-push-btn" onclick="pushDrawerReport()" class="btn btn-navy btn-sm" style="display:none">📣 Push to Users</button>
+            <button onclick="closeGameDrawer()" class="btn btn-ghost btn-sm">✕</button>
+        </div>
+    </div>
+    <div id="drawer-subs" style="padding:14px 20px 0;display:none"></div>
+    <div id="drawer-body" style="padding:20px;font-size:13px;line-height:1.6"></div>
+</div>
+
+<script>
+// ── Sortable games table ─────────────────────────────────────────────────────
+let _sortDir = { date: -1, status: 1, subs: -1, opp: 1 };
+let _sortCur = 'date';
+function sortGames(col) {
+    if (_sortCur === col) _sortDir[col] *= -1;
+    _sortCur = col;
+    document.querySelectorAll('.sort-btn').forEach(b => b.classList.toggle('on', b.dataset.sort === col));
+    const tbody = document.getElementById('games-tbody');
+    const rows  = Array.from(tbody.querySelectorAll('tr'));
+    rows.sort((a, b) => {
+        let av = a.dataset[col], bv = b.dataset[col];
+        if (col === 'subs') return (_sortDir[col]) * (parseInt(bv) - parseInt(av));
+        if (col === 'date') return (_sortDir[col]) * av.localeCompare(bv) * -1;
+        const statusOrder = { finalized: 0, review: 1, empty: 2 };
+        if (col === 'status') return (_sortDir[col]) * ((statusOrder[av]||9) - (statusOrder[bv]||9));
+        return (_sortDir[col]) * av.localeCompare(bv);
+    });
+    rows.forEach(r => tbody.appendChild(r));
+}
+
+// ── Game detail drawer ───────────────────────────────────────────────────────
+let _drawerGameKey = null;
+let _drawerGameData = null;
+
+async function openGameDrawer(gameKey) {
+    _drawerGameKey = gameKey;
+    _drawerGameData = null;
+    const overlay  = document.getElementById('game-drawer-overlay');
+    const drawer   = document.getElementById('game-drawer');
+    const body     = document.getElementById('drawer-body');
+    const subsEl   = document.getElementById('drawer-subs');
+    document.getElementById('drawer-title').textContent    = 'Loading…';
+    document.getElementById('drawer-subtitle').textContent = '';
+    document.getElementById('drawer-pdf-btn').style.display  = 'none';
+    document.getElementById('drawer-push-btn').style.display = 'none';
+    body.innerHTML    = '<div style="color:var(--muted);padding:20px 0;text-align:center">Loading…</div>';
+    subsEl.innerHTML  = '';
+    subsEl.style.display = 'none';
+    overlay.style.display = 'block';
+    drawer.style.display  = 'flex';
+
+    const j = await _gApi({ action: 'get_game_detail', game_key: gameKey });
+    if (!j.ok) { body.innerHTML = '<div style="color:var(--danger)">⚠️ ' + (j.error||'Error loading game') + '</div>'; return; }
+
+    const g    = j.game;
+    const fin  = j.finalized;
+    const subs = j.submissions || [];
+
+    document.getElementById('drawer-title').textContent    = (g.wave_team||'Wave') + ' vs ' + (g.opponent||'Opponent');
+    document.getElementById('drawer-subtitle').textContent = [
+        g.game_date ? new Date(g.game_date+'T12:00:00').toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'}) : '',
+        g.tournament || ''
+    ].filter(Boolean).join(' · ');
+
+    // ── Submissions panel (always shown if there are any) ──
+    if (subs.length > 0) {
+        let sh = `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">Submissions</div>`;
+        subs.forEach(s => {
+            const initials = (s.tracker_name||'?').split(' ').map(w=>w[0]?.toUpperCase()||'').join('').slice(0,2)||'?';
+            const colors   = ['#3b82f6','#8b5cf6','#ec4899','#f59e0b','#10b981','#06b6d4','#ef4444'];
+            const color    = colors[initials.charCodeAt(0) % colors.length];
+            const approved = fin && j.official && j.official.method && j.official.method.includes(':'+s.id+':');
+            sh += `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;background:${approved?'rgba(22,163,74,.05)':'var(--bg)'}">
+                <div style="width:28px;height:28px;border-radius:50%;background:${color};color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0">${initials}</div>
+                <div style="flex:1;min-width:0">
+                    <div style="font-weight:700;font-size:13px">${s.tracker_name||'Unknown'}${s.is_coach?' <span style="font-size:10px;background:rgba(0,48,135,.1);color:var(--navy);border-radius:4px;padding:1px 5px;font-weight:700">COACH</span>':''}${approved?' <span style="font-size:10px;background:rgba(22,163,74,.15);color:#15803d;border-radius:4px;padding:1px 5px;font-weight:700">✓ APPROVED</span>':''}</div>
+                    <div style="font-size:11px;color:var(--muted)">Score: ${s.wave_score||'?'} – ${s.opp_score||'?'} · ${s.event_count||0} events</div>
+                </div>
+                <div style="display:flex;gap:6px;flex-shrink:0">
+                    ${!approved ? `<button class="btn btn-sm" style="background:rgba(22,163,74,.1);color:#15803d;border:1px solid rgba(22,163,74,.3);font-weight:700" onclick="approveSubmission(${s.id},'${(s.tracker_name||'').replace(/'/g,"\\'")}')">✓ Approve</button>` : ''}
+                    <button class="btn btn-sm" style="background:rgba(239,68,68,.06);color:var(--danger);border:1px solid rgba(239,68,68,.2)" onclick="deleteSubmission(${s.id},'${(s.tracker_name||'').replace(/'/g,"\\'")}','${gameKey}')">🗑</button>
+                </div>
+            </div>`;
+        });
+        subsEl.innerHTML     = sh;
+        subsEl.style.display = 'block';
+    }
+
+    // ── Report body ──
+    if (fin && j.official) {
+        document.getElementById('drawer-pdf-btn').style.display  = '';
+        document.getElementById('drawer-push-btn').style.display = '';
+
+        // Build a synthetic single-game structure for crunchReportData
+        const players = g.players || [];
+        const og = j.official;
+        const syntheticGame = [{
+            game_key: gameKey,
+            game_date: g.game_date,
+            opponent: g.opponent,
+            tournament: g.tournament || '',
+            players: players,
+            official_events: og.events || [],
+            wave_score: og.wave_score,
+            opp_score:  og.opp_score,
+        }];
+        const title    = (g.wave_team||'Wave') + ' vs ' + (g.opponent||'Opponent');
+        const subtitle = document.getElementById('drawer-subtitle').textContent;
+        _drawerGameData = crunchReportData(syntheticGame, title, subtitle, 'game');
+        body.innerHTML = renderReportHTML(_drawerGameData);
+    } else if (subs.length > 0) {
+        body.innerHTML = `<div style="text-align:center;padding:30px 20px;color:var(--muted)">
+            <div style="font-size:32px;margin-bottom:10px">⏳</div>
+            <div style="font-weight:700;margin-bottom:4px">Awaiting Approval</div>
+            <div style="font-size:12px">Approve a submission above to generate the full report.</div>
+        </div>`;
+    } else {
+        body.innerHTML = `<div style="text-align:center;padding:30px 20px;color:var(--muted)">
+            <div style="font-size:32px;margin-bottom:10px">📭</div>
+            <div style="font-weight:700;margin-bottom:4px">No Submissions Yet</div>
+            <div style="font-size:12px">No stats have been submitted for this game.</div>
+        </div>`;
+    }
+}
+
+function closeGameDrawer() {
+    document.getElementById('game-drawer-overlay').style.display = 'none';
+    document.getElementById('game-drawer').style.display         = 'none';
+    _drawerGameKey  = null;
+    _drawerGameData = null;
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeGameDrawer(); });
+
+// ── Drawer: Print to PDF ─────────────────────────────────────────────────────
+function printDrawerReport() {
+    if (!_drawerGameData) return;
+    const title   = document.getElementById('drawer-title').textContent;
+    const content = document.getElementById('drawer-body').innerHTML;
+    const win = window.open('', '_blank');
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+    <style>
+        body{font-family:system-ui,sans-serif;font-size:13px;color:#1a2235;padding:24px;max-width:860px;margin:0 auto}
+        table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}
+        th{background:#003087;color:#fff;padding:6px 10px;text-align:left;font-size:11px}
+        th:not(:first-child):not(:nth-child(2)){text-align:center}
+        td{padding:5px 10px;border-bottom:1px solid #e2e8f0}
+        td:not(:first-child):not(:nth-child(2)){text-align:center}
+        tr:nth-child(even){background:#f8fafc}
+        h2{font-size:15px;color:#003087;border-bottom:2px solid #e2e8f0;padding-bottom:5px;margin:20px 0 10px;text-transform:uppercase;letter-spacing:1px}
+        svg{max-width:100%}
+        @media print{body{padding:0}}
+    </style></head><body>
+    <h1 style="font-size:20px;color:#003087;margin-bottom:2px">${title}</h1>
+    <div style="font-size:12px;color:#64748b;margin-bottom:20px">${document.getElementById('drawer-subtitle').textContent}</div>
+    ${content}
+    <script>window.onload=function(){window.print()}<\/script>
+    </body></html>`);
+    win.document.close();
+}
+
+// ── Game row: direct PDF (opens drawer data or loads fresh) ──────────────────
+async function downloadGamePdf(gameKey, label) {
+    if (_drawerGameKey === gameKey && _drawerGameData) { printDrawerReport(); return; }
+    const j = await _gApi({ action: 'get_game_detail', game_key: gameKey });
+    if (!j.ok || !j.official) { alert('⚠️ No approved stats for this game yet.'); return; }
+    const g = j.game;
+    const syntheticGame = [{
+        game_key: gameKey, game_date: g.game_date, opponent: g.opponent,
+        tournament: g.tournament||'', players: g.players||[],
+        official_events: j.official.events||[], wave_score: j.official.wave_score, opp_score: j.official.opp_score,
+    }];
+    const data = crunchReportData(syntheticGame, label, '', 'game');
+    const win = window.open('', '_blank');
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${label}</title>
+    <style>body{font-family:system-ui,sans-serif;font-size:13px;color:#1a2235;padding:24px;max-width:860px;margin:0 auto}
+    table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}th{background:#003087;color:#fff;padding:6px 10px;text-align:left;font-size:11px}
+    th:not(:first-child):not(:nth-child(2)){text-align:center}td{padding:5px 10px;border-bottom:1px solid #e2e8f0}td:not(:first-child):not(:nth-child(2)){text-align:center}
+    tr:nth-child(even){background:#f8fafc}h2{font-size:15px;color:#003087;border-bottom:2px solid #e2e8f0;padding-bottom:5px;margin:20px 0 10px;text-transform:uppercase;letter-spacing:1px}
+    svg{max-width:100%}@media print{body{padding:0}}</style></head><body>
+    <h1 style="font-size:20px;color:#003087;margin-bottom:20px">${label}</h1>
+    ${renderReportHTML(data)}
+    <script>window.onload=function(){window.print()}<\/script></body></html>`);
+    win.document.close();
+}
+
+// ── Drawer: Push report to end users ─────────────────────────────────────────
+async function pushDrawerReport() {
+    if (!_drawerGameData || !_drawerGameKey) return;
+    const title = document.getElementById('drawer-title').textContent;
+    const sub   = document.getElementById('drawer-subtitle').textContent;
+    const btn   = document.getElementById('drawer-push-btn');
+    btn.disabled = true; btn.textContent = '⏳ Pushing…';
+    const j = await _gApi({ action: 'publish_report', data: {
+        type: 'game', title, subtitle: sub, season: '', data: _drawerGameData
+    }});
+    btn.disabled = false; btn.textContent = '📣 Push to Users';
+    if (j.ok) { btn.textContent = '✅ Pushed!'; setTimeout(()=>btn.textContent='📣 Push to Users', 3000); }
+    else alert('⚠️ ' + (j.error||'Publish failed'));
+}
+
+// ── Game row: push without opening drawer ─────────────────────────────────────
+async function pushGameReport(gameKey, label) {
+    if (!confirm('Publish a report for "'+label+'" to end users?')) return;
+    const j = await _gApi({ action: 'get_game_detail', game_key: gameKey });
+    if (!j.ok || !j.official) { alert('⚠️ No approved stats for this game yet.'); return; }
+    const g = j.game;
+    const syntheticGame = [{
+        game_key: gameKey, game_date: g.game_date, opponent: g.opponent,
+        tournament: g.tournament||'', players: g.players||[],
+        official_events: j.official.events||[], wave_score: j.official.wave_score, opp_score: j.official.opp_score,
+    }];
+    const data = crunchReportData(syntheticGame, label, '', 'game');
+    const r = await _gApi({ action: 'publish_report', data: {
+        type: 'game', title: label, subtitle: '', season: '', data
+    }});
+    if (r.ok) alert('✅ Report published to end users!');
+    else alert('⚠️ ' + (r.error||'Publish failed'));
+}
+
+
+// ── Publish generated report ─────────────────────────────────────────────────
+// ── Delete submission ────────────────────────────────────────────────────────
+window.deleteSubmission = async function(subId, name, gameKey) {
+    if (!confirm('Delete submission from "'+name+'"?\n\nThis cannot be undone.')) return;
+    const j = await _gApi({ action: 'delete_submission', submission_id: subId });
+    if (j.ok) { closeGameDrawer(); location.reload(); }
+    else alert('⚠️ ' + (j.error||'Delete failed'));
+};
+</script>
+
+<?php endif; ?>
+
+<?php if ($view === 'settings'): ?>
+<script>
+async function saveAiSettings() {
+  const key = document.getElementById('s-gemini-key')?.value?.trim() || '';
+  const statusEl = document.getElementById('s-ai-status');
+  if (statusEl) statusEl.textContent = '⏳ Saving…';
+  try {
+    const token = '<?=addslashes($token)?>';
+    const r = await fetch('stats-api.php?t=' + encodeURIComponent(token) + '&_=' + Date.now(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save_settings', token, settings: { gemini_api_key: key } })
+    });
+    const j = await r.json();
+    if (j.ok) {
+      if (statusEl) statusEl.textContent = '✅ Saved! Reload the page to see the status update.';
+      const t = document.getElementById('toast');
+      if (t) { t.textContent = '✅ AI settings saved'; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 3000); }
+    } else {
+      if (statusEl) statusEl.textContent = '⚠️ ' + (j.error || 'Save failed');
+    }
+  } catch(e) {
+    if (statusEl) statusEl.textContent = '⚠️ Network error: ' + e.message;
+  }
+}
+</script>
+<div style="max-width:600px;margin:32px auto;padding:0 20px 40px">
+  <div style="font-family:var(--fd);font-size:28px;color:var(--navy);margin-bottom:4px">⚙️ Branding Settings</div>
+  <div style="font-size:13px;color:var(--muted);margin-bottom:24px">Customise the club name and colours used throughout the app and admin.</div>
+  <div style="background:var(--sur);border:1px solid var(--bdr);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:20px">
+    <div>
+      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Club / Team Name</label>
+      <input class="inp" id="s-club-name" value="<?=$clubName?>" placeholder="e.g. WAVE" style="max-width:320px">
+      <div style="font-size:11px;color:var(--muted);margin-top:5px">Replaces "WAVE" throughout the admin and tracker app.</div>
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Primary Colour</label>
+      <div style="display:flex;align-items:center;gap:12px">
+        <input type="color" id="s-primary" value="<?=$colorPri?>" style="width:48px;height:40px;border:none;background:none;cursor:pointer;padding:0">
+        <input class="inp" id="s-primary-hex" value="<?=$colorPri?>" placeholder="#003087" style="max-width:120px;font-family:var(--fm)">
+        <div id="s-primary-preview" style="width:80px;height:40px;border-radius:8px;background:<?=$colorPri?>;border:1px solid var(--bdr)"></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:5px">Used for the header, buttons, and navy accents.</div>
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Secondary / Accent Colour</label>
+      <div style="display:flex;align-items:center;gap:12px">
+        <input type="color" id="s-secondary" value="<?=$colorSec?>" style="width:48px;height:40px;border:none;background:none;cursor:pointer;padding:0">
+        <input class="inp" id="s-secondary-hex" value="<?=$colorSec?>" placeholder="#FFC72C" style="max-width:120px;font-family:var(--fm)">
+        <div id="s-secondary-preview" style="width:80px;height:40px;border-radius:8px;background:<?=$colorSec?>;border:1px solid var(--bdr)"></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:5px">Used for gold highlights and active states.</div>
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Preview</label>
+      <div id="s-preview-bar" style="height:48px;border-radius:10px;display:flex;align-items:center;padding:0 18px;gap:12px;background:<?=$colorPri?>;border-bottom:3px solid <?=$colorSec?>">
+        <span id="s-preview-title" style="font-family:var(--fd);font-size:22px;color:#fff;letter-spacing:1px"><?=$clubName?> STATS</span>
+        <span id="s-preview-badge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:<?=$colorSec?>;color:#1a2235"><?=$clubName?></span>
+      </div>
+    </div>
+    <button class="btn btn-navy" onclick="saveSettings()" style="align-self:flex-start">&#x1F4BE; Save Settings</button>
+  </div>
+</div>
+
+<!-- ── AI / Gemini Settings ── -->
+<div style="max-width:600px;margin:24px auto;padding:0 20px 40px">
+  <div style="font-family:var(--fd);font-size:22px;color:var(--navy);margin-bottom:4px">🤖 AI Settings</div>
+  <div style="font-size:13px;color:var(--muted);margin-bottom:20px">Powers the Ask Mika natural language analysis feature.</div>
+  <div style="background:var(--sur);border:1px solid var(--bdr);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:20px">
+    <div>
+      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Google Gemini API Key</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input class="inp" id="s-gemini-key" type="text" value="<?=htmlspecialchars($settings['gemini_api_key'] ?? '')?>" placeholder="AIza…" style="flex:1;font-family:var(--fm)">
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:5px">
+        Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--navy)">aistudio.google.com</a>. Stored securely server-side — never exposed to end users. Model: <code style="font-family:var(--fm)">gemini-2.5-flash</code>.
+      </div>
+    </div>
+    <?php if(!empty($settings['gemini_api_key'])): ?>
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(22,101,52,.07);border:1px solid rgba(22,101,52,.2);border-radius:8px;font-size:12px;color:#166534">
+      ✅ Gemini key is set — Ask Mika is ready to use.
+    </div>
+    <?php else: ?>
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.25);border-radius:8px;font-size:12px;color:#92400e">
+      ⚠️ No key set — Ask Mika will be unavailable until you add one.
+    </div>
+    <?php endif; ?>
+    <button class="btn btn-navy" onclick="saveAiSettings()" style="align-self:flex-start">&#x1F4BE; Save AI Settings</button>
+    <div id="s-ai-status" style="font-size:12px;color:var(--muted)"></div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:14px;margin-bottom:14px">
+    <div class="card-hdr"><span class="card-ttl">💾 Database Backup</span></div>
+    <div class="card-body">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Download a full copy of the SQLite database. Keep this somewhere safe — it contains all games, rosters, submissions, and settings.</div>
+        <a href="stats-api.php?t=<?=$token?>&action=download_db" class="btn btn-ghost" style="display:inline-block;text-decoration:none">📥 Download stats.db</a>
+    </div>
+</div>
+
+<div class="card" style="border-color:rgba(239,68,68,.25);margin-top:14px">
+    <div class="card-hdr" style="background:rgba(239,68,68,.04)"><span class="card-ttl" style="color:var(--danger)">⚠️ Danger Zone</span></div>
+    <div class="card-body">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Permanently delete all games, submissions, and official records. Rosters, team names, and tournament names are kept.</div>
+        <button class="btn btn-danger" onclick="showDeleteAll()">🗑 Delete All Game Data</button>
+    </div>
+</div>
+<?php endif; ?>
+
+</main>
+</div><!-- .layout -->
+
+<div style="text-align:center;padding:14px;font-size:11px;color:var(--muted);border-top:1px solid var(--bdr);background:var(--sur)">
+    Built with <a href="https://claude.ai" target="_blank" style="color:var(--navy);font-weight:700;text-decoration:none">Claude</a> by Anthropic &nbsp;·&nbsp; Ottawa Wave Swim &amp; Polo
+</div>
+
+<!-- ══ PDF Team Picker Overlay ══ -->
+<div id="tournament-picker-overlay" class="overlay" style="display:none" onclick="if(event.target===this)closeTournamentPicker()">
+    <div class="overlay-box" style="max-width:440px">
+        <div class="overlay-hdr">
+            <div class="overlay-ttl">📋 Assign a Tournament</div>
+            <button class="btn btn-ghost btn-sm" onclick="closeTournamentPicker()">✕</button>
+        </div>
+        <div style="padding:14px 20px 6px;font-size:13px;color:var(--muted)">Which tournament are these rosters for? This will be saved with each roster so the tracker can pre-fill it.</div>
+        <div style="padding:10px 20px 4px;display:flex;flex-direction:column;gap:8px;max-height:240px;overflow-y:auto" id="tournament-picker-list"></div>
+        <div style="padding:12px 20px 6px;border-top:1px solid var(--bdr)">
+            <label class="lbl" style="margin-bottom:6px;display:block">Or enter a new tournament name</label>
+            <div style="display:flex;gap:8px">
+                <input class="inp" id="tournament-custom-input" placeholder="e.g. Spring Invitational 2026" style="flex:1;margin:0">
+                <button class="btn btn-navy" onclick="confirmTournamentPicker()">Use This</button>
+            </div>
+        </div>
+        <div style="padding:10px 20px 16px;border-top:1px solid var(--bdr)">
+            <button class="btn btn-out" style="width:100%" onclick="skipTournamentPicker()">Skip / No Tournament</button>
+        </div>
+    </div>
+</div>
+
+<div id="team-picker-overlay" class="overlay" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+    <div class="overlay-box" style="max-width:460px">
+        <div class="overlay-hdr">
+            <div class="overlay-ttl">Teams Found in PDF</div>
+            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('team-picker-overlay').style.display='none'">✕</button>
+        </div>
+        <div style="padding:12px 20px 6px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--bdr)">Select teams to import. Tap a name to rename it before saving.</div>
+        <div id="team-picker-list" style="padding:12px 20px 4px;max-height:320px;overflow-y:auto"></div>
+        <div style="padding:12px 20px 16px;border-top:1px solid var(--bdr);display:flex;gap:8px;align-items:center">
+            <button class="btn btn-ghost btn-sm" onclick="pickerSelectAll(true)">Select All</button>
+            <button class="btn btn-ghost btn-sm" onclick="pickerSelectAll(false)">None</button>
+            <button class="btn btn-navy" style="margin-left:auto" onclick="importSelectedTeams()">✅ Import Selected</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══ Delete All Overlay ══ -->
+<div id="delete-all-overlay" class="overlay" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+    <div class="overlay-box" style="max-width:420px">
+        <div class="overlay-hdr" style="background:rgba(239,68,68,.06)">
+            <div class="overlay-ttl" style="color:var(--danger)">⚠️ Delete All Game Data</div>
+            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('delete-all-overlay').style.display='none'">✕</button>
+        </div>
+        <div style="padding:20px">
+            <div style="background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.25);border-radius:10px;padding:14px;margin-bottom:16px;font-size:13px;line-height:1.6">
+                <strong style="color:var(--danger)">This will permanently delete:</strong><br>
+                • All games<br>• All tracker submissions<br>• All official records<br><br>
+                <strong>Rosters will NOT be deleted.</strong><br>This action cannot be undone.
+            </div>
+            <div class="fg" style="margin-bottom:16px">
+                <label class="lbl">Type <strong>DELETE</strong> to confirm</label>
+                <input class="inp" id="delete-confirm-input" placeholder="DELETE" oninput="document.getElementById('confirm-delete-btn').disabled=this.value!=='DELETE'">
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-danger" id="confirm-delete-btn" disabled onclick="confirmDeleteAll()">🗑 Delete Everything</button>
+                <button class="btn btn-out" onclick="document.getElementById('delete-all-overlay').style.display='none'">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══ Export Overlay ══ -->
+<div id="export-overlay" class="overlay" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+    <div class="overlay-box" style="max-width:480px">
+        <div class="overlay-hdr">
+            <div class="overlay-ttl">📊 Export Stats</div>
+            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('export-overlay').style.display='none'">✕</button>
+        </div>
+        <div style="padding:20px">
+            <div id="export-scope-info" style="font-size:13px;color:var(--muted);margin-bottom:14px;padding:10px 12px;background:var(--bg);border-radius:8px"></div>
+            <div id="export-game-picker" style="display:none;margin-bottom:14px">
+                <label class="lbl">Select Game</label>
+                <select class="inp sel" id="export-game-select">
+                    <?php foreach($games as $g): ?>
+                    <option value="<?=htmlspecialchars($g['game_key'])?>"><?=htmlspecialchars($g['wave_team'])?> vs <?=htmlspecialchars($g['opponent'])?> — <?=date('M j Y',strtotime($g['game_date']))?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div id="export-season-picker" style="display:none;margin-bottom:14px">
+                <label class="lbl">Select Season</label>
+                <select class="inp sel" id="export-season-select">
+                    <?php $seasons=array_unique(array_filter(array_column($games,'season'))); foreach($seasons as $s): ?>
+                    <option value="<?=htmlspecialchars($s)?>"><?=htmlspecialchars($s)?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div style="margin-bottom:16px;padding:14px;background:rgba(0,48,135,.04);border:1px solid rgba(0,48,135,.12);border-radius:10px">
+                <div style="font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Goal Attribution</div>
+                <div style="display:flex;gap:8px">
+                    <button id="attr-individual" class="btn btn-navy btn-sm" onclick="setGoalAttr('individual')" style="flex:1">👤 By Player</button>
+                    <button id="attr-team"       class="btn btn-out  btn-sm" onclick="setGoalAttr('team')"       style="flex:1">🏊 By Team Only</button>
+                </div>
+                <div id="attr-note" style="display:none;margin-top:10px;font-size:12px;color:var(--muted);font-style:italic;line-height:1.5">*** Teams score goals. Individual goal scorers are not displayed.</div>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-navy" onclick="doExport('pdf')">📄 Export PDF</button>
+                <button class="btn btn-ghost" onclick="doExport('excel')">📊 Export Excel</button>
+            </div>
+            <div id="export-status" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>
+        </div>
+    </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- ══ Raw Data Export Overlay ══ -->
+<div id="raw-export-overlay" class="overlay" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+    <div class="overlay-box" style="max-width:460px">
+        <div class="overlay-hdr">
+            <div class="overlay-ttl">📊 Export Raw Data</div>
+            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('raw-export-overlay').style.display='none'">✕</button>
+        </div>
+        <div style="padding:20px">
+            <div id="raw-scope-info" style="font-size:13px;color:var(--muted);margin-bottom:14px;padding:10px 12px;background:var(--bg);border-radius:8px;line-height:1.5"></div>
+
+            <div id="raw-game-picker" style="display:none;margin-bottom:14px">
+                <label class="lbl">Select Game</label>
+                <select class="inp sel" id="raw-game-select">
+                    <?php foreach($games as $g): if(!isset($offMap[$g['game_key']])) continue; ?>
+                    <option value="<?=htmlspecialchars($g['game_key'])?>"><?=htmlspecialchars($g['wave_team'])?> vs <?=htmlspecialchars($g['opponent'])?> — <?=date('M j Y',strtotime($g['game_date']))?><?=$g['tournament']?' · '.htmlspecialchars($g['tournament']):''?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div id="raw-tournament-picker" style="display:none;margin-bottom:14px">
+                <label class="lbl">Select Tournament</label>
+                <select class="inp sel" id="raw-tournament-select">
+                    <?php
+                    $approvedTournaments = array_unique(array_filter(array_column(array_filter($games, fn($g) => isset($offMap[$g['game_key']])), 'tournament')));
+                    sort($approvedTournaments);
+                    foreach($approvedTournaments as $tn): ?>
+                    <option value="<?=htmlspecialchars($tn)?>"><?=htmlspecialchars($tn)?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div style="margin-bottom:16px;padding:12px 14px;background:rgba(0,48,135,.04);border:1px solid rgba(0,48,135,.12);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.6">
+                <strong style="color:var(--navy)">Columns included:</strong> Date · Game · Tournament · Age Group · Player · Cap # · Position · Period · Stat · Shot Location
+            </div>
+
+            <div class="btn-row">
+                <button class="btn btn-navy" onclick="doRawExport()">📥 Download Excel</button>
+                <button class="btn btn-out" onclick="document.getElementById('raw-export-overlay').style.display='none'">Cancel</button>
+            </div>
+            <div id="raw-export-status" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+const TOKEN = '<?=addslashes($token)?>';
+const CLUB_NAME = '<?=addslashes($settings["club_name"] ?? "WAVE")?>';
+const TOURNAMENT_NAMES = <?=json_encode(array_column($tournamentNames,'name'))?>;
 
 // Always navigate with a cache-busting timestamp so the browser never shows stale PHP
 function goto(url) {
@@ -2557,7 +2618,7 @@ async function saveSettings() {
   else toast('Error: ' + (j.error || 'unknown'));
 }
 
-// ── Ask the Data ────────────────────────────────────────────────────────────────
+// ── Ask Mika ────────────────────────────────────────────────────────────────────
 let _aiScope = 'game';
 
 function setAiScope(s) {
