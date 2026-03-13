@@ -410,7 +410,7 @@ function reload() {
 <!-- ══ ROSTER EDITOR ══ -->
 <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px">
     <div>
-        <div style="font-family:var(--fd);font-size:28px;color:var(--navy)"><?=htmlspecialchars($selRoster['name'])?></div>
+        <div style="font-family:var(--fd);font-size:28px;color:var(--navy)" data-roster-name><?=htmlspecialchars($selRoster['name'])?></div>
         <div style="font-size:13px;color:var(--muted)"><?=htmlspecialchars($selRoster['age_group'])?><?=!empty($selRoster['tournament'])?' · '.htmlspecialchars($selRoster['tournament']):''?> · <?=count($selRoster['players'])?> players</div>
     </div>
     <div class="btn-row">
@@ -423,7 +423,10 @@ function reload() {
 <div class="card" style="margin-bottom:14px">
     <div class="card-hdr"><span class="card-ttl">Roster Details</span></div>
     <div class="card-body">
-        <div class="fg"><label class="lbl">Tournament (optional)</label>
+        <div class="fg" style="margin-bottom:12px"><label class="lbl">Team Name <span style="color:var(--danger)">*</span></label>
+            <input class="inp" id="r-name" value="<?=htmlspecialchars($selRoster['name'] ?? '')?>" placeholder="e.g. WAVE U16 Girls">
+        </div>
+        <div class="fg"><label class="lbl">Tournament <span style="font-weight:400;opacity:.5">(optional)</span></label>
             <input class="inp" id="r-tournament" value="<?=htmlspecialchars($selRoster['tournament'] ?? '')?>" placeholder="e.g. Spring Invitational">
         </div>
     </div>
@@ -528,14 +531,19 @@ function addPlayer(){
     renderList();
 }
 async function saveRoster(){
-    const name=<?=json_encode($selRoster['name'])?>;
+    const name=(document.getElementById('r-name')?.value||'').trim();
+    if (!name) { toast('⚠️ Team name is required'); document.getElementById('r-name').focus(); return; }
     const ag=<?=json_encode($selRoster['age_group'])?>;
     const tournament=(document.getElementById('r-tournament')?.value||'').trim();
     const nums = _players.map(p => p.number);
     const dupes = [...new Set(nums.filter((n,i) => nums.indexOf(n) !== i))];
     if (dupes.length) { toast('⚠️ Duplicate cap number' + (dupes.length>1?'s':'') + ': ' + dupes.map(n=>'#'+n).join(', ') + ' — fix before saving'); return; }
     const j=await api({action:'save_roster',roster_key:ROSTER_KEY,name,age_group:ag,tournament,players:_players});
-    if(j.ok)toast('✅ Roster saved ('+_players.length+' players)'); else toast('⚠️ '+j.error);
+    if(j.ok){
+        toast('✅ Roster saved ('+_players.length+' players)');
+        const h = document.querySelector('[data-roster-name]');
+        if (h) h.textContent = name;
+    } else toast('⚠️ '+j.error);
 }
 
 async function reimportPdf(input,key,name,ag){
@@ -2157,7 +2165,7 @@ window.confirmDeleteAll = async function() {
                 <button class="btn btn-sm" style="background:rgba(22,163,74,.1);color:#15803d;border:1px solid rgba(22,163,74,.3);font-weight:700"
                     onclick="approveSubmission(<?=$s['id']?>,'<?=addslashes($s['tracker_name']?:'Unknown')?>')"
                     title="Approve this submission as the official record">
-                    ✓ Approve
+                    ❓ Approve
                 </button>
                 <?php else: ?>
                 <span style="font-size:11px;color:#15803d;font-weight:700">Official record</span>
@@ -2259,7 +2267,7 @@ async function openGameDrawer(gameKey) {
                     <div style="font-size:11px;color:var(--muted)">Score: ${s.wave_score||'?'} – ${s.opp_score||'?'} · ${s.event_count||0} events</div>
                 </div>
                 <div style="display:flex;gap:6px;flex-shrink:0">
-                    ${!approved ? `<button class="btn btn-sm" style="background:rgba(22,163,74,.1);color:#15803d;border:1px solid rgba(22,163,74,.3);font-weight:700" onclick="approveSubmission(${s.id},'${(s.tracker_name||'').replace(/'/g,"\\'")}')">✓ Approve</button>` : ''}
+                    ${!approved ? `<button class="btn btn-sm" style="background:rgba(22,163,74,.1);color:#15803d;border:1px solid rgba(22,163,74,.3);font-weight:700" onclick="approveSubmission(${s.id},'${(s.tracker_name||'').replace(/'/g,"\\'")}')">❓ Approve</button>` : ''}
                     <button class="btn btn-sm" style="background:rgba(239,68,68,.06);color:var(--danger);border:1px solid rgba(239,68,68,.2)" onclick="deleteSubmission(${s.id},'${(s.tracker_name||'').replace(/'/g,"\\'")}','${gameKey}')">🗑</button>
                 </div>
             </div>`;
