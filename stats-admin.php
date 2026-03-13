@@ -2087,11 +2087,11 @@ function crunchReportData(games, title, subtitle, scope) {
     }
 
     // ── 7. Shot Zone Heat Map Summary ───────────────────────────────────────
-    const shotZoneEvts = allEvents.filter(e => ['goal','shot'].includes(e.stat) && e.shotLocation?.zone);
+    const shotZoneEvts = allEvents.filter(e => ['goal','shot'].includes(e.stat) && (e.shotLocation?.zone || e.shotZone != null));
     if (shotZoneEvts.length) {
         const zones = {};
         shotZoneEvts.forEach(e => {
-            const z = e.shotLocation.zone;
+            const z = e.shotLocation?.zone ?? e.shotZone;
             if (!zones[z]) zones[z] = { attempts: 0, goals: 0 };
             zones[z].attempts++;
             if (e.stat === 'goal') zones[z].goals++;
