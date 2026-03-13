@@ -1045,6 +1045,22 @@ PROMPT;
         $db->prepare("DELETE FROM tournament_names WHERE name=?")->execute([trim($body['name'] ?? '')]);
         echo json_encode(['ok' => true]);
 
+    } elseif ($action === 'update_tournament_name') {
+        requireAdmin($db);
+        $oldName = trim($body['old_name'] ?? '');
+        $newName = trim($body['name'] ?? '');
+        $season  = trim($body['season'] ?? '');
+        if (!$oldName || !$newName) throw new Exception('name required');
+        if ($oldName !== $newName) {
+            // Rename: delete old, insert new
+            $db->prepare("DELETE FROM tournament_names WHERE name=?")->execute([$oldName]);
+            $db->prepare("INSERT INTO tournament_names (name, season) VALUES (?,?) ON CONFLICT(name) DO UPDATE SET season=excluded.season")
+               ->execute([$newName, $season]);
+        } else {
+            $db->prepare("UPDATE tournament_names SET season=? WHERE name=?")->execute([$season, $newName]);
+        }
+        echo json_encode(['ok' => true]);
+
     } elseif ($action === 'merge_games') {
         // Move all submissions from source game into target game, then delete source
         requireAdmin($db);
