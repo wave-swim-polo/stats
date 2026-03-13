@@ -2506,17 +2506,22 @@ async function saveAiSettings() {
   }
 }
 </script>
-<div style="max-width:600px;margin:32px auto;padding:0 20px 40px">
-  <div style="font-family:var(--fd);font-size:28px;color:var(--navy);margin-bottom:4px">⚙️ Branding Settings</div>
-  <div style="font-size:13px;color:var(--muted);margin-bottom:24px">Customise the club name and colours used throughout the app and admin.</div>
-  <div style="background:var(--sur);border:1px solid var(--bdr);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:20px">
+<div style="margin-bottom:18px">
+  <div style="font-family:var(--fd);font-size:28px;color:var(--navy)">⚙️ Settings</div>
+  <div style="font-size:13px;color:var(--muted)">Customise the club name, colours, and AI settings.</div>
+</div>
+
+<!-- ── Branding ── -->
+<div class="card" style="margin-bottom:16px">
+  <div class="card-hdr"><span class="card-ttl">🎨 Branding</span></div>
+  <div class="card-body" style="display:flex;flex-direction:column;gap:20px">
     <div>
-      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Club / Team Name</label>
+      <label class="lbl">Club / Team Name</label>
       <input class="inp" id="s-club-name" value="<?=$clubName?>" placeholder="e.g. WAVE" style="max-width:320px">
       <div style="font-size:11px;color:var(--muted);margin-top:5px">Replaces "WAVE" throughout the admin and tracker app.</div>
     </div>
     <div>
-      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Primary Colour</label>
+      <label class="lbl">Primary Colour</label>
       <div style="display:flex;align-items:center;gap:12px">
         <input type="color" id="s-primary" value="<?=$colorPri?>" style="width:48px;height:40px;border:none;background:none;cursor:pointer;padding:0">
         <input class="inp" id="s-primary-hex" value="<?=$colorPri?>" placeholder="#003087" style="max-width:120px;font-family:var(--fm)">
@@ -2525,7 +2530,7 @@ async function saveAiSettings() {
       <div style="font-size:11px;color:var(--muted);margin-top:5px">Used for the header, buttons, and navy accents.</div>
     </div>
     <div>
-      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Secondary / Accent Colour</label>
+      <label class="lbl">Secondary / Accent Colour</label>
       <div style="display:flex;align-items:center;gap:12px">
         <input type="color" id="s-secondary" value="<?=$colorSec?>" style="width:48px;height:40px;border:none;background:none;cursor:pointer;padding:0">
         <input class="inp" id="s-secondary-hex" value="<?=$colorSec?>" placeholder="#FFC72C" style="max-width:120px;font-family:var(--fm)">
@@ -2534,26 +2539,24 @@ async function saveAiSettings() {
       <div style="font-size:11px;color:var(--muted);margin-top:5px">Used for gold highlights and active states.</div>
     </div>
     <div>
-      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Preview</label>
+      <label class="lbl">Preview</label>
       <div id="s-preview-bar" style="height:48px;border-radius:10px;display:flex;align-items:center;padding:0 18px;gap:12px;background:<?=$colorPri?>;border-bottom:3px solid <?=$colorSec?>">
         <span id="s-preview-title" style="font-family:var(--fd);font-size:22px;color:#fff;letter-spacing:1px"><?=$clubName?> STATS</span>
         <span id="s-preview-badge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:<?=$colorSec?>;color:#1a2235"><?=$clubName?></span>
       </div>
     </div>
-    <button class="btn btn-navy" onclick="saveSettings()" style="align-self:flex-start">&#x1F4BE; Save Settings</button>
+    <div><button class="btn btn-navy" onclick="saveSettings()">💾 Save Settings</button></div>
   </div>
 </div>
 
-<!-- ── AI / Gemini Settings ── -->
-<div style="max-width:600px;margin:24px auto;padding:0 20px 40px">
-  <div style="font-family:var(--fd);font-size:22px;color:var(--navy);margin-bottom:4px">🤖 AI Settings</div>
-  <div style="font-size:13px;color:var(--muted);margin-bottom:20px">Powers the Ask SkipShot natural language analysis feature.</div>
-  <div style="background:var(--sur);border:1px solid var(--bdr);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:20px">
+<!-- ── AI / SkipShot Settings ── -->
+<div class="card" style="margin-bottom:16px">
+  <div class="card-hdr"><span class="card-ttl">🤖 AI Settings</span></div>
+  <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
+    <div style="font-size:13px;color:var(--muted)">Powers the Ask SkipShot natural language analysis feature.</div>
     <div>
-      <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Google Gemini API Key</label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input class="inp" id="s-gemini-key" type="text" value="<?=htmlspecialchars($settings['gemini_api_key'] ?? '')?>" placeholder="AIza…" style="flex:1;font-family:var(--fm)">
-      </div>
+      <label class="lbl">Google Gemini API Key</label>
+      <input class="inp" id="s-gemini-key" type="text" value="<?=htmlspecialchars($settings['gemini_api_key'] ?? '')?>" placeholder="AIza…" style="font-family:var(--fm)">
       <div style="font-size:11px;color:var(--muted);margin-top:5px">
         Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--navy)">aistudio.google.com</a>. Stored securely server-side — never exposed to end users. Model: <code style="font-family:var(--fm)">gemini-2.5-flash</code>.
       </div>
@@ -2567,12 +2570,15 @@ async function saveAiSettings() {
       ⚠️ No key set — Ask SkipShot will be unavailable until you add one.
     </div>
     <?php endif; ?>
-    <button class="btn btn-navy" onclick="saveAiSettings()" style="align-self:flex-start">&#x1F4BE; Save AI Settings</button>
-    <div id="s-ai-status" style="font-size:12px;color:var(--muted)"></div>
+    <div>
+      <button class="btn btn-navy" onclick="saveAiSettings()">💾 Save AI Settings</button>
+      <div id="s-ai-status" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+    </div>
   </div>
 </div>
 
-<div class="card" style="margin-top:14px;margin-bottom:14px">
+<!-- ── Database Backup ── -->
+<div class="card" style="margin-bottom:16px">
     <div class="card-hdr"><span class="card-ttl">💾 Database Backup</span></div>
     <div class="card-body">
         <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Download a full copy of the SQLite database. Keep this somewhere safe — it contains all games, rosters, submissions, and settings.</div>
@@ -2580,7 +2586,8 @@ async function saveAiSettings() {
     </div>
 </div>
 
-<div class="card" style="border-color:rgba(239,68,68,.25);margin-top:14px">
+<!-- ── Danger Zone ── -->
+<div class="card" style="border-color:rgba(239,68,68,.25)">
     <div class="card-hdr" style="background:rgba(239,68,68,.04)"><span class="card-ttl" style="color:var(--danger)">⚠️ Danger Zone</span></div>
     <div class="card-body">
         <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Permanently delete all games, submissions, and official records. Rosters, team names, and tournament names are kept.</div>
