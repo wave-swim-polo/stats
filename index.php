@@ -1787,8 +1787,9 @@ function TrackScreen({ db, update, push, activeGame, goHomeSignal, clubName }) {
         d.teams.push({ id: homeId, name: homeName || "WAVE", color: "#003087" });
         if (homePlayers.length) {
           for (const p of homePlayers) {
-            if (!d.players.find(x => x.id === p.id))
-              d.players.push({ id: p.id || uid(), teamId: homeId, name: p.name, number: p.number, isGoalie: !!p.isGoalie });
+            // Always create a fresh player entry with this game's teamId
+            // (roster players may exist in d.players from a previous game with a different teamId)
+            d.players.push({ id: uid(), teamId: homeId, name: p.name, number: p.number, isGoalie: !!p.isGoalie });
           }
         } else {
           // Placeholder roster
