@@ -1581,15 +1581,17 @@ function InlineSubmitSheet({ game, db, push, onClose }) {
 
 // ─── Inline Report Sheet ───────────────────────────────────────────────────────
 function InlineReportSheet({ game, db, onClose }) {
+  const homeTeam   = db.teams.find(t => t.id === game.homeTeamId);
+  const awayTeam   = db.teams.find(t => t.id === game.awayTeamId);
+  const reportData = buildTrackerReport([game], db,
+    `${homeTeam?.name || "WAVE"} vs ${awayTeam?.name || "Opponent"}`,
+    game.tournament ? `${game.tournament}${game.date ? " · " + new Date(game.date+"T12:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"}) : ""}` : "",
+    "game");
   const [exporting, setExporting] = useState(false);
-  const homeTeam = db.teams.find(t => t.id === game.homeTeamId);
-  const awayTeam = db.teams.find(t => t.id === game.awayTeamId);
-  const statKeys = ["goal","assist","shot","steal","block","turnover","kickout","kickout_earned"];
-  const statHdrs = ["G","A","SH","ST","BL","TO","KO","KOE"];
 
   async function handlePDF() {
     setExporting(true);
-    try { await exportTrackerPDF(game, db, "My Game Report"); }
+    try { await exportReportPDF(reportData, `${homeTeam?.name||"WAVE"}_vs_${awayTeam?.name||"Opp"}`); }
     catch(e) { alert("PDF error: " + e.message); }
     setExporting(false);
   }
@@ -1611,52 +1613,15 @@ function InlineReportSheet({ game, db, onClose }) {
           </div>
         </div>
         <div style={{ overflowY: "auto", paddingBottom: 24 }}>
-          <div className="scoreboard" style={{ margin: "0 16px 16px" }}>
-            <div className="score-teams">
-              <div className="score-team">
-                <div className="score-team-name" style={{ color: homeTeam?.color || "var(--gold)" }}>{homeTeam?.name}</div>
-                <div className="score-number">{game.homeScore}</div>
-              </div>
-              <div className="score-sep">–</div>
-              <div className="score-team">
-                <div className="score-team-name" style={{ color: awayTeam?.color || "rgba(255,255,255,0.6)" }}>{awayTeam?.name}</div>
-                <div className="score-number">{game.awayScore}</div>
-              </div>
-            </div>
-            <div style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>{game.events.length} events</div>
-          </div>
-
-          <ShotHeatMap events={game.events} players={db.players} title="Shot Map" />
-
-          {[game.homeTeamId, game.awayTeamId].map(tid => {
-            const team    = db.teams.find(t => t.id === tid);
-            const players = db.players.filter(p => p.teamId === tid).sort((a,b) => parseInt(a.number)-parseInt(b.number));
-            if (!players.length) return null;
-            return (
-              <div key={tid} className="section">
-                <div className="card">
-                  <div className="card-header"><span className="card-title" style={{ color: team?.color }}>{team?.name}</span></div>
-                  <div style={{ overflowX: "auto" }}>
-                    <table className="stat-table">
-                      <thead><tr><th>Player</th>{statHdrs.map(h => <th key={h}>{h}</th>)}</tr></thead>
-                      <tbody>
-                        {players.map(p => {
-                          const s = playerStats(game.events, p.id);
-                          if (!statKeys.some(k => s[k] > 0)) return null;
-                          return (
-                            <tr key={p.id}>
-                              <td><span style={{ color: "var(--muted)", fontSize: 11, marginRight: 5 }}>#{p.number}</span>{p.name}{p.isGoalie && <span style={{ marginLeft: 4, fontSize: 10, color: "var(--accent)" }}>GK</span>}</td>
-                              {statKeys.map(k => <td key={k} className={s[k] ? "highlight" : ""}>{s[k] || "—"}</td>)}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          <GameReportCard
+            reportData={reportData}
+            badge={{ icon: "📊",
+              title: `${homeTeam?.name||"WAVE"} ${game.homeScore}–${game.awayScore} ${awayTeam?.name||"Opponent"}`,
+              sub: [game.tournament, game.date ? new Date(game.date+"T12:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"}) : "", `${game.events?.length||0} events`].filter(Boolean).join(" · "),
+              bg: "linear-gradient(135deg,#1e3a6e,#003087)" }}
+            exporting={exporting}
+            onPDF={handlePDF}
+          />
         </div>
       </div>
     </div>
@@ -1678,17 +1643,25 @@ function InlineOfficialSheet({ serverKey, db, onClose }) {
       .catch(() => { setLoading(false); setError("Could not reach server."); });
   }, [serverKey]);
 
+  const reportData = data ? (() => {
+    const { game: g, official } = data;
+    const adminGame = {
+      game_key: serverKey, game_date: g.game_date, opponent: g.opponent,
+      tournament: g.tournament, wave_team: g.wave_team,
+      wave_score: official.wave_score, opp_score: official.opp_score,
+      players: g.players || [], official_events: official.events || [],
+    };
+    return crunchTrackerReport([adminGame],
+      `${g.wave_team} vs ${g.opponent}`,
+      [g.tournament, new Date(g.game_date+"T12:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"})].filter(Boolean).join(" · "),
+      "game");
+  })() : null;
+
   async function handlePDF() {
-    if (!data) return;
+    if (!reportData || !data) return;
     setExporting(true);
-    try {
-      const { game: g, official } = data;
-      const localGame   = db.games.find(sg => sg.serverKey === serverKey);
-      const fakeGame    = { homeScore: official.wave_score, awayScore: official.opp_score, events: official.events || [], homeTeamId: localGame?.homeTeamId || "home", awayTeamId: localGame?.awayTeamId || "away", tournament: g.tournament, ageGroup: g.age_group, date: g.game_date };
-      const fakePlayers = (g.players || []).map(p => ({ ...p, teamId: localGame?.homeTeamId || "home" }));
-      const fakeDB      = { teams: [{ id: localGame?.homeTeamId || "home", name: g.wave_team, color: "#003087" }, { id: localGame?.awayTeamId || "away", name: g.opponent, color: "#94a3b8" }], players: fakePlayers };
-      await exportTrackerPDF(fakeGame, fakeDB, "Official Game Report");
-    } catch(e) { alert("PDF error: " + e.message); }
+    try { await exportReportPDF(reportData, `${data.game.wave_team}_vs_${data.game.opponent}`); }
+    catch(e) { alert("PDF error: " + e.message); }
     setExporting(false);
   }
 
@@ -1706,7 +1679,6 @@ function InlineOfficialSheet({ serverKey, db, onClose }) {
             <button className="btn btn-icon" onClick={onClose}>✕</button>
           </div>
         </div>
-
         <div style={{ overflowY: "auto", paddingBottom: 24 }}>
           {loading && <div style={{ textAlign: "center", padding: "40px 16px", color: "var(--muted)" }}>⏳ Loading…</div>}
           {error && !loading && (
@@ -1716,77 +1688,17 @@ function InlineOfficialSheet({ serverKey, db, onClose }) {
               <div style={{ fontSize: 13, color: "var(--muted)" }}>{error}</div>
             </div>
           )}
-          {data && (() => {
-            const { game: g, official } = data;
-            const events     = official.events || [];
-            const players    = g.players || [];
-            const statMap    = {};
-            events.forEach(e => { if (e.playerId && e.stat) { if (!statMap[e.playerId]) statMap[e.playerId] = {}; statMap[e.playerId][e.stat] = (statMap[e.playerId][e.stat] || 0) + 1; } });
-            const wavePlayers = players.filter(p => !p.isOpponent).sort((a,b) => parseInt(a.number)-parseInt(b.number));
-            const forShots   = events.filter(isShotFor);
-            const agaShots   = events.filter(e => e.stat === "goals_against" || e.stat === "shot_against");
-            const muPct = forShots.length ? Math.round(forShots.filter(e=>e.situation==="man_up"&&isGoalFor(e)).length / Math.max(forShots.filter(e=>e.situation==="man_up").length,1)*100) : null;
-            const mdPct = forShots.length ? Math.round(forShots.filter(e=>e.situation==="man_down"&&isGoalFor(e)).length / Math.max(forShots.filter(e=>e.situation==="man_down").length,1)*100) : null;
-            const statKeys = ["goal","assist","shot","steal","block","turnover","kickout","kickout_earned","save"];
-            const statHdrs = ["G","A","SH","ST","BL","TO","KO","KOE","SV"];
-            return (
-              <>
-                <div style={{ margin: "0 16px 16px", background: "linear-gradient(135deg,#166534,#15803d)", borderRadius: 16, padding: "20px 16px", textAlign: "center", color: "#fff" }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, opacity: 0.7, marginBottom: 6, textTransform: "uppercase" }}>✅ Official Record</div>
-                  <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 12 }}>{g.wave_team} vs {g.opponent}</div>
-                  <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 24 }}>
-                    <div><div style={{ fontSize: 48, fontWeight: 900, lineHeight: 1 }}>{official.wave_score}</div><div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>{g.wave_team}</div></div>
-                    <div style={{ fontSize: 28, opacity: 0.5 }}>–</div>
-                    <div><div style={{ fontSize: 48, fontWeight: 900, lineHeight: 1 }}>{official.opp_score}</div><div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>{g.opponent}</div></div>
-                  </div>
-                  <div style={{ fontSize: 11, opacity: 0.55, marginTop: 10 }}>Approved {new Date(official.finalized_at).toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"})}</div>
-                </div>
-
-                {(forShots.length > 0 || agaShots.length > 0) && (
-                  <div style={{ padding: "0 16px 14px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    {[
-                      { label: "Shots For",     shots: forShots, goals: forShots.filter(isGoalFor).length,          color: "#22c55e" },
-                      { label: "Shots Against", shots: agaShots, goals: agaShots.filter(isGoalAgainst).length, color: "#ef4444" },
-                    ].map(({ label, shots, goals, color }) => (
-                      <div key={label} style={{ background: "var(--surface)", borderRadius: 12, padding: "12px 14px", border: "1px solid var(--border)" }}>
-                        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>{label}</div>
-                        <div style={{ fontSize: 28, fontWeight: 900, color }}>{shots.length}</div>
-                        <div style={{ fontSize: 12, color: "var(--muted)" }}>{goals} goal{goals!==1?"s":""} · {shots.length ? Math.round(goals/shots.length*100) : 0}%</div>
-                        {muPct !== null && label === "Shots For" && <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted)" }}><span style={{ color: "#3b82f6" }}>PP {muPct}%</span> · <span style={{ color: "#f97316" }}>PK {mdPct}%</span></div>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <ShotHeatMap events={events} players={players} title="Official Shot Map" />
-
-                {wavePlayers.length > 0 && (
-                  <div className="section">
-                    <div className="card">
-                      <div className="card-header"><span className="card-title">{g.wave_team} — Player Stats</span></div>
-                      <div style={{ overflowX: "auto" }}>
-                        <table className="stat-table">
-                          <thead><tr><th>Player</th>{statHdrs.map(h => <th key={h}>{h}</th>)}</tr></thead>
-                          <tbody>
-                            {wavePlayers.map(p => {
-                              const s = statMap[p.id] || {};
-                              if (!statKeys.some(k => s[k] > 0)) return null;
-                              return (
-                                <tr key={p.id}>
-                                  <td><span style={{ color: "var(--muted)", fontSize: 11, marginRight: 5 }}>#{p.number}</span>{p.name}{p.isGoalie && <span style={{ marginLeft: 4, fontSize: 10, color: "var(--accent)" }}>GK</span>}</td>
-                                  {statKeys.map(k => <td key={k} className={s[k] ? "highlight" : ""}>{s[k] || "—"}</td>)}
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </>
-            );
-          })()}
+          {data && reportData && (
+            <GameReportCard
+              reportData={reportData}
+              badge={{ icon: "✅",
+                title: `${data.game.wave_team} ${data.official.wave_score}–${data.official.opp_score} ${data.game.opponent}`,
+                sub: `✅ Official · Approved ${new Date(data.official.finalized_at).toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"})}`,
+                bg: "linear-gradient(135deg,#166534,#15803d)" }}
+              exporting={exporting}
+              onPDF={handlePDF}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -5189,124 +5101,544 @@ async function exportTrackerPDF(game, db, title) {
   doc.save(fn);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// UNIFIED REPORT ENGINE
+// Converts tracker-format game data → crunchReportData-compatible shape,
+// then renders via ReportViewer — same output as admin.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Convert one tracker game + db into the admin crunchReportData input shape
+function trackerGameToAdminShape(game, db) {
+  const homeTeam = db.teams.find(t => t.id === game.homeTeamId);
+  const awayTeam = db.teams.find(t => t.id === game.awayTeamId);
+  const wavePlayers = db.players.filter(p => p.teamId === game.homeTeamId);
+  return {
+    game_key:        game.id,
+    game_date:       game.date,
+    opponent:        awayTeam?.name || "Opponent",
+    tournament:      game.tournament || "",
+    wave_team:       homeTeam?.name || "WAVE",
+    wave_score:      game.homeScore ?? 0,
+    opp_score:       game.awayScore ?? 0,
+    players:         wavePlayers,
+    official_events: game.events || [],
+  };
+}
+
+// Build report data from one or more tracker games using the shared engine
+// scope: 'game' | 'tournament' | 'season'
+function buildTrackerReport(games, db, title, subtitle, scope) {
+  const adminGames = games.map(g => trackerGameToAdminShape(g, db));
+  return crunchTrackerReport(adminGames, title, subtitle || "", scope);
+}
+
+// Shared crunch logic — canonical version used by all report surfaces
+// Matches admin's crunchReportData exactly (same sections, same field names)
+function crunchTrackerReport(games, title, subtitle, scope) {
+  const playerMap = {};
+  games.forEach(g => (g.players || []).forEach(p => { playerMap[p.id] = p; }));
+
+  const allEvents  = [];
+  const gameResults = [];
+
+  games.forEach(g => {
+    const evts = (g.official_events || []).map(e => ({ ...e, _game: g.game_key, _gameDate: g.game_date }));
+    allEvents.push(...evts);
+    const waveScore = g.wave_score ?? evts.filter(e => ["goal","penalty_5m_goal_for"].includes(e.stat) && playerMap[e.playerId]).length;
+    const oppScore  = g.opp_score  ?? evts.filter(e => ["goals_against","penalty_5m_goal_against"].includes(e.stat)).length;
+    gameResults.push({
+      date: g.game_date, opponent: g.opponent, tournament: g.tournament,
+      waveScore, oppScore,
+      result: waveScore > oppScore ? "W" : waveScore < oppScore ? "L" : "T",
+      events: evts,
+    });
+  });
+
+  const sections = [];
+
+  // ── 1. Results table (multi-game only) ──────────────────────────────────────
+  if (games.length > 1) {
+    const wins   = gameResults.filter(r => r.result === "W").length;
+    const losses = gameResults.filter(r => r.result === "L").length;
+    const ties   = gameResults.filter(r => r.result === "T").length;
+    sections.push({
+      type: "results_table", title: "Results",
+      rows: gameResults,
+      record: `${wins}W–${losses}L${ties ? "–"+ties+"T" : ""}`,
+      waveTotal: gameResults.reduce((s,r) => s+r.waveScore, 0),
+      oppTotal:  gameResults.reduce((s,r) => s+r.oppScore,  0),
+    });
+  }
+
+  // ── 2. Box score by period ───────────────────────────────────────────────────
+  const periods = ["1Q","2Q","3Q","4Q","OT","SO"];
+  const boxScore = {};
+  periods.forEach(p => {
+    const pe = allEvents.filter(e => e.period === p);
+    boxScore[p] = {
+      waveGoals: pe.filter(e => ["goal","penalty_5m_goal_for"].includes(e.stat) && playerMap[e.playerId]).length,
+      oppGoals:  pe.filter(e => ["goals_against","penalty_5m_goal_against"].includes(e.stat)).length,
+      waveShots: pe.filter(e => ["goal","shot"].includes(e.stat) && playerMap[e.playerId]).length,
+      waveSaves: pe.filter(e => e.stat === "save" && playerMap[e.playerId]).length,
+    };
+  });
+  if (periods.some(p => boxScore[p].waveGoals || boxScore[p].oppGoals || boxScore[p].waveShots))
+    sections.push({ type: "box_score", title: "Team Box Score", boxScore, periods });
+
+  // ── 3. Player stats + Leaderboards ──────────────────────────────────────────
+  const statKeys = ["goal","assist","shot","steal","block","turnover","kickout","kickout_earned","save"];
+  const playerStats = {};
+  Object.entries(playerMap).forEach(([pid, p]) => {
+    playerStats[pid] = { name: p.name, number: p.number, isGoalie: p.isGoalie,
+      stats: Object.fromEntries(statKeys.map(k => [k, 0])),
+      goalsAgainst: 0, shotsAgainst: 0, penalties5mFor: 0, penalties5mAgainst: 0, penalties5mBlock: 0 };
+  });
+  allEvents.forEach(e => {
+    const pid = e.playerId;
+    if (!pid || !playerStats[pid]) return;
+    if (statKeys.includes(e.stat))           playerStats[pid].stats[e.stat]++;
+    if (e.stat === "goals_against")           playerStats[pid].goalsAgainst++;
+    if (e.stat === "shot_against")            playerStats[pid].shotsAgainst++;
+    if (e.stat === "penalty_5m_goal_for")     { playerStats[pid].stats.goal++; playerStats[pid].penalties5mFor++; }
+    if (e.stat === "penalty_5m_miss_for")     playerStats[pid].penalties5mFor++;
+    if (e.stat === "penalty_5m_goal_against") playerStats[pid].goalsAgainst++;
+    if (e.stat === "penalty_5m_block")        playerStats[pid].penalties5mBlock++;
+  });
+
+  const allPlayers    = Object.entries(playerStats).map(([pid, p]) => ({ pid, ...p }))
+    .filter(p => Object.values(p.stats).some(v => v > 0) || p.goalsAgainst > 0 || p.shotsAgainst > 0);
+  const fieldPlayers  = allPlayers.filter(p => !p.isGoalie);
+  const goaliePlayers = allPlayers.filter(p => p.isGoalie);
+
+  sections.push({ type: "player_stats", title: "Player Stats", fieldPlayers, goaliePlayers, statKeys });
+
+  const STAT_LABELS = {goal:"Goals",assist:"Assists",shot:"Shots",steal:"Steals",block:"Blocks",kickout_earned:"KO Earned",save:"Saves"};
+  const leaders = {};
+  ["goal","assist","shot","steal","block","kickout_earned","save"].forEach(stat => {
+    const sorted = allPlayers.filter(p => p.stats[stat] > 0).sort((a,b) => b.stats[stat]-a.stats[stat]).slice(0, 5);
+    if (sorted.length) leaders[stat] = sorted;
+  });
+  if (Object.keys(leaders).length) sections.push({ type: "leaderboards", title: "Leaderboards", leaders });
+
+  // ── 4. Goalie stats ─────────────────────────────────────────────────────────
+  const goalieData = goaliePlayers.map(p => {
+    const saves = p.stats.save || 0;
+    const ga    = p.goalsAgainst || 0;
+    const sa    = p.shotsAgainst > 0 ? p.shotsAgainst : saves + ga;
+    const svPct = sa > 0 ? Math.round(saves / sa * 1000) / 10 : null;
+    return { name: p.name, number: p.number, saves, goalsAgainst: ga, shotsAgainst: sa, svPct };
+  }).filter(g => g.saves + g.goalsAgainst > 0);
+  if (goalieData.length) sections.push({ type: "goalies", title: "Goalie Stats", goalieData });
+
+  // ── 5. Shooting situations ───────────────────────────────────────────────────
+  const situations = {
+    man_up:   { label: "Man Up",   shots: 0, goals: 0 },
+    man_down: { label: "Man Down", shots: 0, goals: 0 },
+    even:     { label: "Even",     shots: 0, goals: 0 },
+  };
+  allEvents.filter(e => ["goal","shot"].includes(e.stat) && playerMap[e.playerId]).forEach(e => {
+    const sit = e.situation || "even";
+    if (!situations[sit]) return;
+    situations[sit].shots++;
+    if (e.stat === "goal") situations[sit].goals++;
+  });
+  const situArr = Object.entries(situations).map(([k,v]) => ({
+    key: k, ...v, pct: v.shots > 0 ? Math.round(v.goals/v.shots*100) : null
+  })).filter(s => s.shots > 0);
+  if (situArr.length) sections.push({ type: "situations", title: "Shooting by Situation", situations: situArr });
+
+  // ── 6. 5M Penalties ─────────────────────────────────────────────────────────
+  const penFor      = allEvents.filter(e => e.stat === "penalty_5m_goal_for").length;
+  const penForMiss  = allEvents.filter(e => e.stat === "penalty_5m_miss_for").length;
+  const penAgainst  = allEvents.filter(e => e.stat === "penalty_5m_goal_against").length;
+  const penAgMiss   = allEvents.filter(e => e.stat === "penalty_5m_miss_against").length;
+  const penBlock    = allEvents.filter(e => e.stat === "penalty_5m_block").length;
+  const totalFor    = penFor + penForMiss;
+  const totalAgainst = penAgainst + penAgMiss + penBlock;
+  if (totalFor + totalAgainst > 0) sections.push({
+    type: "penalties", title: "5M Penalties",
+    forGoals: penFor, forMiss: penForMiss, totalFor,
+    againstGoals: penAgainst, againstMiss: penAgMiss, againstBlock: penBlock, totalAgainst,
+  });
+
+  // ── 7. Shot zone summary ─────────────────────────────────────────────────────
+  // Support both shotLocation.zone (admin events) and shotZone (tracker events)
+  const shotZoneEvts = allEvents.filter(e =>
+    ["goal","shot"].includes(e.stat) && playerMap[e.playerId] &&
+    (e.shotLocation?.zone != null || e.shotZone != null)
+  );
+  if (shotZoneEvts.length) {
+    const zones = {};
+    shotZoneEvts.forEach(e => {
+      const z = e.shotLocation?.zone ?? e.shotZone;
+      if (!zones[z]) zones[z] = { attempts: 0, goals: 0 };
+      zones[z].attempts++;
+      if (e.stat === "goal") zones[z].goals++;
+    });
+    const zoneArr = Object.entries(zones).map(([z,d]) => ({
+      zone: parseInt(z), ...d, pct: Math.round(d.goals/d.attempts*100)
+    })).sort((a,b) => b.attempts-a.attempts);
+    sections.push({ type: "shot_zones", title: "Shot Zone Summary", zones: zoneArr, total: shotZoneEvts.length });
+  }
+
+  // ── 8. Shot map ──────────────────────────────────────────────────────────────
+  const shotMapEvts = allEvents.filter(e =>
+    ["goal","shot","penalty_5m_goal_for","penalty_5m_miss_for","penalty_5m_block"].includes(e.stat)
+    && e.shotLocation?.x != null && e.shotLocation?.y != null
+  );
+  if (shotMapEvts.length) sections.push({
+    type: "shot_map", title: "Shot Map",
+    shots: shotMapEvts.map(e => ({
+      x: e.shotLocation.x, y: e.shotLocation.y,
+      isGoal: ["goal","penalty_5m_goal_for"].includes(e.stat),
+      is5m:   ["penalty_5m_goal_for","penalty_5m_miss_for","penalty_5m_block"].includes(e.stat),
+    })),
+  });
+
+  // ── 9. Game flow by period ───────────────────────────────────────────────────
+  const flowPeriods = ["1Q","2Q","3Q","4Q","OT"];
+  const gameFlow = gameResults.map(g => {
+    const pMap = {};
+    flowPeriods.forEach(p => {
+      const pe = g.events.filter(e => e.period === p);
+      pMap[p] = {
+        wave: pe.filter(e => ["goal","penalty_5m_goal_for"].includes(e.stat) && playerMap[e.playerId]).length,
+        opp:  pe.filter(e => ["goals_against","penalty_5m_goal_against"].includes(e.stat)).length,
+      };
+    });
+    return { opponent: g.opponent, date: g.date, waveScore: g.waveScore, oppScore: g.oppScore, result: g.result, periods: pMap };
+  });
+  const hasFlow = gameFlow.some(g => flowPeriods.some(p => g.periods[p].wave || g.periods[p].opp));
+  if (hasFlow) sections.push({ type: "game_flow", title: "Game Flow", games: gameFlow, periods: flowPeriods });
+
+  // ── 10. Top performers ───────────────────────────────────────────────────────
+  const perfStats = [
+    { key: "assist",        label: "🤝 Top Playmaker" },
+    { key: "steal",         label: "🦊 Most Steals" },
+    { key: "block",         label: "🛡 Most Blocks" },
+    { key: "kickout_earned",label: "📣 Most KO Earned" },
+  ];
+  const goaliePerf = goaliePlayers.map(p => {
+    const saves = p.stats.save || 0;
+    const ga    = p.goalsAgainst || 0;
+    const sa    = saves + ga;
+    return { ...p, svPct: sa > 0 ? Math.round(saves/sa*100) : null };
+  }).filter(p => (p.stats.save || 0) > 0).sort((a,b) => (b.svPct||0)-(a.svPct||0));
+
+  const topPerformers = perfStats.map(({ key, label }) => {
+    const sorted = allPlayers.filter(p => p.stats[key] > 0).sort((a,b) => b.stats[key]-a.stats[key]);
+    if (!sorted.length) return null;
+    return { key, label, player: sorted[0], value: sorted[0].stats[key] };
+  }).filter(Boolean);
+
+  // Shooting % — min 3 shots to qualify
+  const shootingPct = allPlayers
+    .filter(p => !p.isGoalie && p.stats.shot >= 3)
+    .map(p => ({ ...p, pct: Math.round(p.stats.goal / p.stats.shot * 100) }))
+    .sort((a,b) => b.pct-a.pct);
+  if (shootingPct.length) {
+    const best = shootingPct[0];
+    topPerformers.unshift({ key: "shoot_pct", label: "🎯 Best Shooting %", player: best, value: best.pct + "%", sub: `${best.stats.goal}G / ${best.stats.shot} shots` });
+  }
+  if (goaliePerf.length) topPerformers.push({ key: "save_pct", label: "🧤 Best Save %", player: goaliePerf[0], value: goaliePerf[0].svPct + "%" });
+  if (topPerformers.length) sections.push({ type: "top_performers", title: "Top Performers", performers: topPerformers });
+
+  // ── 11. Turnovers vs Steals ──────────────────────────────────────────────────
+  const teamSteals    = allEvents.filter(e => e.stat === "steal"    && playerMap[e.playerId]).length;
+  const teamTurnovers = allEvents.filter(e => e.stat === "turnover" && playerMap[e.playerId]).length;
+  const tvsPlayers = allPlayers
+    .map(p => ({ name: p.name, number: p.number, steals: p.stats.steal||0, turnovers: p.stats.turnover||0, net: (p.stats.steal||0)-(p.stats.turnover||0) }))
+    .filter(p => p.steals > 0 || p.turnovers > 0)
+    .sort((a,b) => b.net-a.net);
+  if (teamSteals + teamTurnovers > 0) sections.push({
+    type: "turnovers_steals", title: "Turnovers vs Steals",
+    teamSteals, teamTurnovers, possessionNet: teamSteals-teamTurnovers, players: tvsPlayers,
+  });
+
+  return { title, subtitle, sections, gameCount: games.length, generatedAt: Date.now(), scope };
+}
+
+
+// ─── Shared PDF export using unified report data ───────────────────────────────
+async function exportReportPDF(reportData, filenameBase) {
+  // Uses the same jsPDF path as exportTrackerPDF but fed from unified report
+  if (!window.jspdf) {
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+      s.onload = res; s.onerror = rej; document.head.appendChild(s);
+    });
+  }
+  if (!window.jspdf?.jsPDF?.prototype?.autoTable) {
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js";
+      s.onload = res; s.onerror = rej; document.head.appendChild(s);
+    });
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const NAVY=[0,48,135], GOLD=[255,199,44], WHITE=[255,255,255], LIGHT=[240,242,247], MUTED=[120,130,150];
+
+  // Header banner
+  doc.setFillColor(...NAVY); doc.rect(0,0,210,26,"F");
+  doc.setFillColor(...GOLD); doc.rect(0,26,210,2,"F");
+  doc.setTextColor(...WHITE); doc.setFont("helvetica","bold"); doc.setFontSize(16);
+  doc.text(reportData.title || "Game Report", 12, 12);
+  doc.setFontSize(8); doc.setFont("helvetica","normal");
+  if (reportData.subtitle) doc.text(reportData.subtitle, 12, 19);
+  doc.text("Generated "+new Date().toLocaleDateString("en-CA"), 198, 19, { align:"right" });
+  let y = 33;
+
+  for (const sec of (reportData.sections || [])) {
+    if (y > 260) { doc.addPage(); y = 14; }
+    // Section heading
+    doc.setFillColor(...LIGHT); doc.rect(10, y, 190, 7, "F");
+    doc.setTextColor(...NAVY); doc.setFont("helvetica","bold"); doc.setFontSize(10);
+    doc.text(sec.title, 12, y+5);
+    y += 10;
+
+    if (sec.type === "results_table") {
+      doc.autoTable({
+        startY: y,
+        head: [["Date","Opponent","Us","Opp","Result"]],
+        body: sec.rows.map(r => [
+          new Date(r.date+"T12:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric"}),
+          r.opponent, r.waveScore, r.oppScore, r.result,
+        ]),
+        margin:{left:10,right:10}, styles:{fontSize:9,cellPadding:2},
+        headStyles:{fillColor:NAVY,textColor:WHITE,fontStyle:"bold"},
+        alternateRowStyles:{fillColor:LIGHT},
+        columnStyles:{2:{halign:"center"},3:{halign:"center"},4:{halign:"center",fontStyle:"bold"}},
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+
+    else if (sec.type === "box_score") {
+      const ap = sec.periods.filter(p => sec.boxScore[p].waveGoals||sec.boxScore[p].oppGoals||sec.boxScore[p].waveShots);
+      if (ap.length) {
+        const wt=ap.reduce((s,p)=>s+sec.boxScore[p].waveGoals,0);
+        const ot=ap.reduce((s,p)=>s+sec.boxScore[p].oppGoals,0);
+        const ws=ap.reduce((s,p)=>s+sec.boxScore[p].waveShots,0);
+        const sv=ap.reduce((s,p)=>s+sec.boxScore[p].waveSaves,0);
+        doc.autoTable({
+          startY: y,
+          head:[["Team",...ap,"TOT","SH","SV"]],
+          body:[
+            ["WAVE",...ap.map(p=>sec.boxScore[p].waveGoals||"—"),wt,ws,sv],
+            ["Opponent",...ap.map(p=>sec.boxScore[p].oppGoals||"—"),ot,"—","—"],
+          ],
+          margin:{left:10,right:10}, styles:{fontSize:9,cellPadding:2,halign:"center"},
+          headStyles:{fillColor:NAVY,textColor:WHITE,fontStyle:"bold"},
+          columnStyles:{0:{halign:"left",fontStyle:"bold"}},
+        });
+        y = doc.lastAutoTable.finalY + 6;
+      }
+    }
+
+    else if (sec.type === "player_stats") {
+      const all = [...(sec.fieldPlayers||[]),...(sec.goaliePlayers||[])].sort((a,b)=>parseInt(a.number)-parseInt(b.number));
+      const cols = sec.statKeys.filter(k=>all.some(p=>p.stats[k]>0));
+      const hdrs = {goal:"G",assist:"A",shot:"SH",steal:"ST",block:"BL",turnover:"TO",kickout:"KO",kickout_earned:"KOE",save:"SV"};
+      doc.autoTable({
+        startY: y,
+        head:[["#","Name",...cols.map(k=>hdrs[k]||k)]],
+        body: all.map(p=>[p.number, p.name+(p.isGoalie?" 🧤":""), ...cols.map(k=>p.stats[k]||"—")]),
+        margin:{left:10,right:10}, styles:{fontSize:8,cellPadding:2},
+        headStyles:{fillColor:NAVY,textColor:WHITE,fontStyle:"bold"},
+        alternateRowStyles:{fillColor:LIGHT},
+        columnStyles:{0:{halign:"center",cellWidth:10},2:{halign:"center"}},
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+
+    else if (sec.type === "top_performers") {
+      const cols = sec.performers.length;
+      const cw = Math.min(35, 180/cols);
+      sec.performers.forEach((p, i) => {
+        const cx = 12 + i*(cw+2);
+        doc.setFillColor(...LIGHT); doc.roundedRect(cx, y, cw, 24, 2, 2, "F");
+        doc.setTextColor(...MUTED); doc.setFontSize(7); doc.setFont("helvetica","bold");
+        doc.text(p.label.toUpperCase(), cx+cw/2, y+5, {align:"center"});
+        doc.setTextColor(...NAVY); doc.setFontSize(14); doc.setFont("helvetica","bold");
+        doc.text(String(p.value), cx+cw/2, y+13, {align:"center"});
+        doc.setFontSize(7); doc.setFont("helvetica","normal"); doc.setTextColor(40,40,40);
+        doc.text(p.player.name, cx+cw/2, y+19, {align:"center"});
+        doc.setTextColor(...MUTED);
+        doc.text("Cap "+p.player.number, cx+cw/2, y+23, {align:"center"});
+      });
+      y += 30;
+    }
+
+    else if (sec.type === "situations") {
+      doc.autoTable({
+        startY: y,
+        head:[["Situation","Goals","Shots","Conversion"]],
+        body: sec.situations.map(s=>[s.label, s.goals, s.shots, s.pct!=null?s.pct+"%":"—"]),
+        margin:{left:10,right:10}, styles:{fontSize:9,cellPadding:2},
+        headStyles:{fillColor:NAVY,textColor:WHITE,fontStyle:"bold"},
+        alternateRowStyles:{fillColor:LIGHT},
+        columnStyles:{1:{halign:"center"},2:{halign:"center"},3:{halign:"center",fontStyle:"bold"}},
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+
+    else if (sec.type === "turnovers_steals") {
+      doc.autoTable({
+        startY: y,
+        head:[["#","Player","Steals","TO","Net"]],
+        body:[["—","TEAM TOTAL",sec.teamSteals,sec.teamTurnovers,(sec.possessionNet>=0?"+":"")+sec.possessionNet],
+              ...sec.players.map(p=>[p.number,p.name,p.steals||"—",p.turnovers||"—",(p.net>=0?"+":"")+p.net])],
+        margin:{left:10,right:10}, styles:{fontSize:8,cellPadding:2},
+        headStyles:{fillColor:NAVY,textColor:WHITE,fontStyle:"bold"},
+        alternateRowStyles:{fillColor:LIGHT},
+        columnStyles:{0:{halign:"center"},2:{halign:"center"},3:{halign:"center"},4:{halign:"center",fontStyle:"bold"}},
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+
+    else if (sec.type === "goalies") {
+      doc.autoTable({
+        startY: y,
+        head:[["#","Goalie","SV","GA","SA","SV%"]],
+        body: sec.goalieData.map(g=>[g.number,g.name,g.saves,g.goalsAgainst,g.shotsAgainst,g.svPct!=null?g.svPct+"%":"—"]),
+        margin:{left:10,right:10}, styles:{fontSize:9,cellPadding:2},
+        headStyles:{fillColor:NAVY,textColor:WHITE,fontStyle:"bold"},
+        alternateRowStyles:{fillColor:LIGHT},
+        columnStyles:{0:{halign:"center"},2:{halign:"center"},3:{halign:"center"},4:{halign:"center"},5:{halign:"center",fontStyle:"bold"}},
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+
+    else if (sec.type === "penalties") {
+      doc.autoTable({
+        startY: y,
+        head:[["","Goals","Miss","Total","Conv%"]],
+        body:[
+          ["For",   sec.forGoals,     sec.forMiss,     sec.totalFor,     sec.totalFor?Math.round(sec.forGoals/sec.totalFor*100)+"%":"—"],
+          ["Against",sec.againstGoals,sec.againstMiss,sec.totalAgainst,sec.totalAgainst?Math.round(sec.againstGoals/sec.totalAgainst*100)+"%":"—"],
+        ],
+        margin:{left:10,right:10}, styles:{fontSize:9,cellPadding:2},
+        headStyles:{fillColor:NAVY,textColor:WHITE,fontStyle:"bold"},
+        columnStyles:{0:{fontStyle:"bold"},1:{halign:"center"},2:{halign:"center"},3:{halign:"center"},4:{halign:"center",fontStyle:"bold"}},
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+
+    else if (sec.type === "shot_zones") {
+      doc.autoTable({
+        startY: y,
+        head:[["Zone","Attempts","Goals","Conv%"]],
+        body: sec.zones.map(z=>[`Zone ${z.zone}`,z.attempts,z.goals,z.pct+"%"]),
+        margin:{left:10,right:10}, styles:{fontSize:9,cellPadding:2},
+        headStyles:{fillColor:NAVY,textColor:WHITE,fontStyle:"bold"},
+        alternateRowStyles:{fillColor:LIGHT},
+        columnStyles:{1:{halign:"center"},2:{halign:"center"},3:{halign:"center",fontStyle:"bold"}},
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+  }
+
+  // Footer
+  const pages = doc.internal.getNumberOfPages();
+  for (let i=1; i<=pages; i++) {
+    doc.setPage(i);
+    doc.setFillColor(...NAVY); doc.rect(0,285,210,12,"F");
+    doc.setTextColor(...GOLD); doc.setFont("helvetica","bold"); doc.setFontSize(7);
+    doc.text("WAVE SWIM & POLO · Confidential", 12, 292);
+    doc.setTextColor(...WHITE); doc.setFont("helvetica","normal");
+    doc.text(`Page ${i} of ${pages}`, 198, 292, { align:"right" });
+  }
+  doc.save(`WAVE_${(filenameBase||"Report").replace(/\s/g,"_")}_${new Date().toISOString().slice(0,10)}.pdf`);
+}
+
+// ─── Game Report Card — used in both Submitted and Official views ─────────────
+function GameReportCard({ reportData, badge, exporting, onPDF }) {
+  return (
+    <div style={{ padding: "0 0 80px" }}>
+      {badge && (
+        <div style={{ margin: "0 16px 16px", background: badge.bg, borderRadius: 14,
+          padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, color: "#fff" }}>
+          <div style={{ fontSize: 28 }}>{badge.icon}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>{badge.title}</div>
+            {badge.sub && <div style={{ fontSize: 12, opacity: 0.75, marginTop: 2 }}>{badge.sub}</div>}
+          </div>
+          {onPDF && (
+            <button type="button" onClick={onPDF} disabled={exporting} style={{
+              padding: "8px 14px", borderRadius: 9, border: "1.5px solid rgba(255,255,255,0.4)",
+              background: "rgba(255,255,255,0.15)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer",
+            }}>{exporting ? "⏳" : "📄 PDF"}</button>
+          )}
+        </div>
+      )}
+      {!badge && onPDF && (
+        <div style={{ padding: "0 16px 12px", display: "flex", justifyContent: "flex-end" }}>
+          <button type="button" onClick={onPDF} disabled={exporting} style={{
+            padding: "8px 14px", borderRadius: 9, border: "1.5px solid var(--border)",
+            background: "var(--surface2)", color: "var(--navy)", fontWeight: 700, fontSize: 13, cursor: "pointer",
+          }}>{exporting ? "⏳" : "📄 PDF"}</button>
+        </div>
+      )}
+      <div style={{ padding: "0 16px" }}>
+        <ReportViewer data={reportData} />
+      </div>
+    </div>
+  );
+}
+
 // ─── Submitted Reports ────────────────────────────────────────────────────────
 function SubmittedReports({ db, submittedGames }) {
   const [selectedId, setSelectedId] = useState(submittedGames[0]?.id || null);
-  const [exporting, setExporting]   = useState(false);
+  const [exporting,  setExporting]  = useState(false);
   const game = submittedGames.find(g => g.id === selectedId) || submittedGames[0] || null;
 
-  if (submittedGames.length === 0) {
-    return (
-      <div className="empty" style={{ padding: "40px 24px" }}>
-        <div className="empty-icon">📋</div>
-        <div className="empty-title">No submitted games</div>
-        <div className="empty-sub">Games you track and submit will appear here.</div>
-      </div>
-    );
-  }
+  if (submittedGames.length === 0) return (
+    <div className="empty" style={{ padding: "40px 24px" }}>
+      <div className="empty-icon">📋</div>
+      <div className="empty-title">No submitted games</div>
+      <div className="empty-sub">Games you track and submit will appear here.</div>
+    </div>
+  );
 
   const homeTeam = db.teams.find(t => t.id === game?.homeTeamId);
   const awayTeam = db.teams.find(t => t.id === game?.awayTeamId);
+  const reportData = game ? buildTrackerReport([game], db,
+    `${homeTeam?.name || "WAVE"} vs ${awayTeam?.name || "Opponent"}`,
+    game.tournament ? `${game.tournament} · ${game.date ? new Date(game.date).toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"}) : ""}` : "",
+    "game") : null;
 
   async function handlePDF() {
+    if (!reportData) return;
     setExporting(true);
-    try { await exportTrackerPDF(game, db, "My Submitted Report"); }
-    catch(e) { alert("PDF error: " + e.message); }
+    try { await exportReportPDF(reportData, `${homeTeam?.name||"WAVE"}_vs_${awayTeam?.name||"Opp"}`); }
+    catch(e) { alert("PDF error: "+e.message); }
     setExporting(false);
   }
 
   return (
     <div style={{ padding: "0 0 80px" }}>
-      {/* Game selector + PDF button */}
-      <div style={{ padding: "0 16px 14px", display: "flex", gap: 8, alignItems: "flex-end" }}>
-        <div style={{ flex: 1 }}>
+      {submittedGames.length > 1 && (
+        <div style={{ padding: "0 16px 14px" }}>
           <label className="form-label">Select Game</label>
-          <select className="form-input form-select" value={selectedId || ""} onChange={e => setSelectedId(e.target.value)}>
+          <select className="form-input form-select" value={selectedId||""} onChange={e => setSelectedId(e.target.value)}>
             {submittedGames.map(g => {
-              const ht = db.teams.find(t => t.id === g.homeTeamId);
-              const at = db.teams.find(t => t.id === g.awayTeamId);
-              return (
-                <option key={g.id} value={g.id}>
-                  {ht?.name} {g.homeScore}–{g.awayScore} {at?.name} · {new Date(g.date).toLocaleDateString("en-CA",{month:"short",day:"numeric"})}
-                </option>
-              );
+              const ht = db.teams.find(t=>t.id===g.homeTeamId);
+              const at = db.teams.find(t=>t.id===g.awayTeamId);
+              return <option key={g.id} value={g.id}>{ht?.name} {g.homeScore}–{g.awayScore} {at?.name} · {new Date(g.date).toLocaleDateString("en-CA",{month:"short",day:"numeric"})}</option>;
             })}
           </select>
         </div>
-        <button type="button" onClick={handlePDF} disabled={exporting} style={{
-          padding: "9px 14px", borderRadius: 10, border: "1.5px solid var(--border)",
-          background: "var(--surface2)", fontSize: 13, fontWeight: 700, cursor: "pointer",
-          color: "var(--navy)", whiteSpace: "nowrap",
-        }}>{exporting ? "⏳" : "📄 PDF"}</button>
-      </div>
-
-      {game && (
-        <>
-          {/* Score */}
-          <div className="scoreboard" style={{ margin: "0 16px 16px" }}>
-            <div className="score-teams">
-              <div className="score-team">
-                <div className="score-team-name" style={{ color: homeTeam?.color || "var(--gold)" }}>{homeTeam?.name}</div>
-                <div className="score-number">{game.homeScore}</div>
-              </div>
-              <div className="score-sep">–</div>
-              <div className="score-team">
-                <div className="score-team-name" style={{ color: awayTeam?.color || "rgba(255,255,255,0.6)" }}>{awayTeam?.name}</div>
-                <div className="score-number">{game.awayScore}</div>
-              </div>
-            </div>
-            <div style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
-              Your submission · {game.events.length} events
-            </div>
-          </div>
-
-          {/* Shot heat map */}
-          <ShotHeatMap
-            events={game.events}
-            players={db.players}
-            title="Shot Map — Your Submission"
-          />
-
-          {/* Per-team box scores */}
-          {[game.homeTeamId, game.awayTeamId].map(tid => {
-            const team = db.teams.find(t => t.id === tid);
-            const tPlayers = db.players.filter(p => p.teamId === tid).sort((a, b) => parseInt(a.number) - parseInt(b.number));
-            if (!tPlayers.length) return null;
-            const statKeys = ["goal","assist","shot","steal","block","turnover","kickout","kickout_earned"];
-            const statHdrs = ["G","A","SH","ST","BL","TO","KO","KOE"];
-            return (
-              <div key={tid} className="section">
-                <div className="card">
-                  <div className="card-header">
-                    <span className="card-title" style={{ color: team?.color }}>{team?.name}</span>
-                  </div>
-                  <div style={{ overflowX: "auto" }}>
-                    <table className="stat-table">
-                      <thead>
-                        <tr><th>Player</th>{statHdrs.map(h => <th key={h}>{h}</th>)}</tr>
-                      </thead>
-                      <tbody>
-                        {tPlayers.map(p => {
-                          const s = playerStats(game.events, p.id);
-                          const hasAny = statKeys.some(k => s[k] > 0);
-                          if (!hasAny) return null;
-                          return (
-                            <tr key={p.id}>
-                              <td><span style={{ color: "var(--muted)", fontSize: 11, marginRight: 5 }}>#{p.number}</span>{p.name}{p.isGoalie && <span style={{ marginLeft: 4, fontSize: 10, color: "var(--accent)" }}>GK</span>}</td>
-                              {statKeys.map(k => (
-                                <td key={k} className={s[k] ? "highlight" : ""}>{s[k] || "—"}</td>
-                              ))}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </>
+      )}
+      {game && reportData && (
+        <GameReportCard
+          reportData={reportData}
+          badge={{ icon:"📋", title:`${homeTeam?.name||"WAVE"} ${game.homeScore}–${game.awayScore} ${awayTeam?.name||"Opponent"}`,
+                   sub: [game.tournament, game.date ? new Date(game.date).toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"}) : "", `${game.events?.length||0} events tracked`].filter(Boolean).join(" · "),
+                   bg: "linear-gradient(135deg,#1e3a6e,#003087)" }}
+          exporting={exporting}
+          onPDF={handlePDF}
+        />
       )}
     </div>
   );
@@ -5316,206 +5648,84 @@ function SubmittedReports({ db, submittedGames }) {
 function OfficialReports({ db, submittedGames }) {
   const [selectedServerKey, setSelectedServerKey] = useState(submittedGames[0]?.serverKey || null);
   const [loading,   setLoading]   = useState(false);
-  const [data,      setData]      = useState(null);
+  const [serverData, setServerData] = useState(null);
   const [error,     setError]     = useState(null);
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (!selectedServerKey) return;
-    setLoading(true); setError(null); setData(null);
+    setLoading(true); setError(null); setServerData(null);
     fetch(`${SERVER_URL}?action=get_official_game&game_key=${encodeURIComponent(selectedServerKey)}&_=${Date.now()}`)
       .then(r => r.json())
-      .then(j => { setLoading(false); if (j.ok) setData(j); else setError(j.error || "No official record for this game yet."); })
+      .then(j => { setLoading(false); if (j.ok) setServerData(j); else setError(j.error || "No official record for this game yet."); })
       .catch(() => { setLoading(false); setError("Could not reach server."); });
   }, [selectedServerKey]);
 
-  if (submittedGames.length === 0) {
-    return (
-      <div className="empty" style={{ padding: "40px 24px" }}>
-        <div className="empty-icon">✅</div>
-        <div className="empty-title">No submitted games</div>
-        <div className="empty-sub">Submit a game first, then check back once admin has approved it.</div>
-      </div>
-    );
-  }
+  if (submittedGames.length === 0) return (
+    <div className="empty" style={{ padding: "40px 24px" }}>
+      <div className="empty-icon">✅</div>
+      <div className="empty-title">No submitted games</div>
+      <div className="empty-sub">Submit a game first, then check back once admin has approved it.</div>
+    </div>
+  );
 
-  // Build synthetic game/players for PDF export from official data
+  // Build unified report from official server data
+  const reportData = serverData ? (() => {
+    const { game: g, official } = serverData;
+    const adminGame = {
+      game_key: selectedServerKey, game_date: g.game_date, opponent: g.opponent,
+      tournament: g.tournament, wave_team: g.wave_team,
+      wave_score: official.wave_score, opp_score: official.opp_score,
+      players: g.players || [], official_events: official.events || [],
+    };
+    return crunchTrackerReport([adminGame], `${g.wave_team} vs ${g.opponent}`,
+      [g.tournament, new Date(g.game_date+"T12:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"})].filter(Boolean).join(" · "),
+      "game");
+  })() : null;
+
   async function handlePDF() {
-    if (!data) return;
+    if (!reportData || !serverData) return;
     setExporting(true);
-    try {
-      const { game: g, official } = data;
-      const localGame = submittedGames.find(sg => sg.serverKey === selectedServerKey);
-      // Build a fake "game" object compatible with exportTrackerPDF
-      const fakeGame = {
-        homeScore: official.wave_score,
-        awayScore: official.opp_score,
-        events: official.events || [],
-        homeTeamId: localGame?.homeTeamId || "home",
-        awayTeamId: localGame?.awayTeamId || "away",
-        tournament: g.tournament,
-        ageGroup: g.age_group,
-        date: g.game_date,
-      };
-      const fakePlayers = (g.players || []).map(p => ({ ...p, teamId: localGame?.homeTeamId || "home" }));
-      const fakeDB = {
-        teams: [
-          { id: localGame?.homeTeamId || "home",  name: g.wave_team, color: "#003087" },
-          { id: localGame?.awayTeamId || "away",  name: g.opponent,  color: "#94a3b8" },
-        ],
-        players: fakePlayers,
-      };
-      await exportTrackerPDF(fakeGame, fakeDB, "Official Game Report");
-    } catch(e) { alert("PDF error: " + e.message); }
+    try { await exportReportPDF(reportData, `${serverData.game.wave_team}_vs_${serverData.game.opponent}`); }
+    catch(e) { alert("PDF error: "+e.message); }
     setExporting(false);
   }
 
   return (
     <div style={{ padding: "0 0 80px" }}>
-      {/* Game selector + PDF */}
-      <div style={{ padding: "0 16px 14px", display: "flex", gap: 8, alignItems: "flex-end" }}>
-        <div style={{ flex: 1 }}>
+      {submittedGames.length > 1 && (
+        <div style={{ padding: "0 16px 14px" }}>
           <label className="form-label">Select Game</label>
-          <select className="form-input form-select" value={selectedServerKey || ""} onChange={e => setSelectedServerKey(e.target.value)}>
+          <select className="form-input form-select" value={selectedServerKey||""} onChange={e => setSelectedServerKey(e.target.value)}>
             {submittedGames.map(g => {
-              const ht = db.teams.find(t => t.id === g.homeTeamId);
-              const at = db.teams.find(t => t.id === g.awayTeamId);
-              return (
-                <option key={g.id} value={g.serverKey}>
-                  {ht?.name} vs {at?.name} · {new Date(g.date).toLocaleDateString("en-CA",{month:"short",day:"numeric"})}
-                </option>
-              );
+              const ht = db.teams.find(t=>t.id===g.homeTeamId);
+              const at = db.teams.find(t=>t.id===g.awayTeamId);
+              return <option key={g.id} value={g.serverKey}>{ht?.name} vs {at?.name} · {new Date(g.date).toLocaleDateString("en-CA",{month:"short",day:"numeric"})}</option>;
             })}
           </select>
         </div>
-        {data && (
-          <button type="button" onClick={handlePDF} disabled={exporting} style={{
-            padding: "9px 14px", borderRadius: 10, border: "1.5px solid var(--border)",
-            background: "var(--surface2)", fontSize: 13, fontWeight: 700, cursor: "pointer",
-            color: "var(--navy)", whiteSpace: "nowrap",
-          }}>{exporting ? "⏳" : "📄 PDF"}</button>
-        )}
-      </div>
+      )}
 
-      {loading && <div style={{ textAlign: "center", padding: "40px 16px", color: "var(--muted)", fontSize: 14 }}>⏳ Loading official record…</div>}
+      {loading && <div style={{ textAlign:"center", padding:"40px 16px", color:"var(--muted)", fontSize:14 }}>⏳ Loading official record…</div>}
 
       {error && !loading && (
-        <div style={{ margin: "0 16px", padding: "16px", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 12, textAlign: "center" }}>
-          <div style={{ fontSize: 24, marginBottom: 8 }}>⏳</div>
-          <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>Not approved yet</div>
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>{error}</div>
+        <div style={{ margin:"0 16px", padding:"20px", background:"rgba(245,158,11,0.08)", border:"1px solid rgba(245,158,11,0.3)", borderRadius:12, textAlign:"center" }}>
+          <div style={{ fontSize:24, marginBottom:8 }}>⏳</div>
+          <div style={{ fontWeight:700, fontSize:15, marginBottom:4 }}>Not approved yet</div>
+          <div style={{ fontSize:13, color:"var(--muted)" }}>{error}</div>
         </div>
       )}
 
-      {data && !loading && (() => {
-        const { game, official } = data;
-        const players = game.players || [];
-        const events  = official.events || [];
-
-        const statMap = {};
-        events.forEach(e => {
-          if (e.playerId && e.stat) {
-            if (!statMap[e.playerId]) statMap[e.playerId] = {};
-            statMap[e.playerId][e.stat] = (statMap[e.playerId][e.stat] || 0) + 1;
-          }
-        });
-        const wavePlayers = players.filter(p => !p.isOpponent).sort((a,b) => parseInt(a.number)-parseInt(b.number));
-
-        // Shot analysis numbers
-        const forShots  = events.filter(isShotFor);
-        const agaShots  = events.filter(e => e.stat === "goals_against" || e.stat === "shot_against");
-        const muPct = forShots.length ? Math.round(forShots.filter(e=>e.situation==="man_up"&&isGoalFor(e)).length / Math.max(forShots.filter(e=>e.situation==="man_up").length,1) * 100) : null;
-        const mdPct = forShots.length ? Math.round(forShots.filter(e=>e.situation==="man_down"&&isGoalFor(e)).length / Math.max(forShots.filter(e=>e.situation==="man_down").length,1) * 100) : null;
-
-        // Build players list for heat map (combine wave + opp for display)
-        const allPlayers = players;
-
-        return (
-          <>
-            {/* Official banner */}
-            <div style={{ margin: "0 16px 16px", background: "linear-gradient(135deg,#166534,#15803d)", borderRadius: 16, padding: "20px 16px", textAlign: "center", color: "#fff" }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, opacity: 0.7, marginBottom: 6, textTransform: "uppercase" }}>✅ Official Record</div>
-              <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 12 }}>{game.wave_team} vs {game.opponent}</div>
-              <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 24 }}>
-                <div>
-                  <div style={{ fontSize: 48, fontWeight: 900, lineHeight: 1 }}>{official.wave_score}</div>
-                  <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>{game.wave_team}</div>
-                </div>
-                <div style={{ fontSize: 28, opacity: 0.5 }}>–</div>
-                <div>
-                  <div style={{ fontSize: 48, fontWeight: 900, lineHeight: 1 }}>{official.opp_score}</div>
-                  <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>{game.opponent}</div>
-                </div>
-              </div>
-              <div style={{ fontSize: 11, opacity: 0.55, marginTop: 10 }}>
-                Approved {new Date(official.finalized_at).toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"})} · {official.method}
-              </div>
-            </div>
-
-            {/* Shot stats summary cards */}
-            {(forShots.length > 0 || agaShots.length > 0) && (
-              <div style={{ padding: "0 16px 14px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                {[
-                  { label: "Shots For", shots: forShots, goals: forShots.filter(isGoalFor).length, color: "#22c55e" },
-                  { label: "Shots Against", shots: agaShots, goals: agaShots.filter(isGoalAgainst).length, color: "#ef4444" },
-                ].map(({ label, shots, goals, color }) => (
-                  <div key={label} style={{ background: "var(--surface)", borderRadius: 12, padding: "12px 14px", border: "1px solid var(--border)" }}>
-                    <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>{label}</div>
-                    <div style={{ fontSize: 28, fontWeight: 900, color }}>{shots.length}</div>
-                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{goals} goal{goals!==1?"s":""} · {shots.length ? Math.round(goals/shots.length*100) : 0}%</div>
-                    {muPct !== null && label === "Shots For" && (
-                      <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted)" }}>
-                        <span style={{ color: "#3b82f6" }}>PP {muPct}%</span> · <span style={{ color: "#f97316" }}>PK {mdPct}%</span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Heat map */}
-            <ShotHeatMap events={events} players={allPlayers} title="Official Shot Map" />
-
-            {/* Player stats */}
-            {wavePlayers.length > 0 && (
-              <div className="section">
-                <div className="card">
-                  <div className="card-header">
-                    <span className="card-title">{game.wave_team}</span>
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Official stats</span>
-                  </div>
-                  <div style={{ overflowX: "auto" }}>
-                    <table className="stat-table">
-                      <thead>
-                        <tr><th>Player</th><th>G</th><th>A</th><th>SH</th><th>ST</th><th>BL</th><th>TO</th><th>KO</th><th>SV</th></tr>
-                      </thead>
-                      <tbody>
-                        {wavePlayers.map(p => {
-                          const s = statMap[p.id] || {};
-                          const hasAny = Object.values(s).some(v => v > 0);
-                          if (!hasAny) return null;
-                          return (
-                            <tr key={p.id}>
-                              <td>
-                                <span style={{ color: "var(--muted)", fontSize: 11, marginRight: 5 }}>#{p.number}</span>
-                                {p.name}
-                                {p.isGoalie && <span style={{ marginLeft: 4, fontSize: 10, color: "var(--accent)" }}>GK</span>}
-                              </td>
-                              {["goal","assist","shot","steal","block","turnover","kickout","save"].map(k => (
-                                <td key={k} className={s[k] ? "highlight" : ""}>{s[k] || "—"}</td>
-                              ))}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            )}
-          </>
-        );
-      })()}
+      {serverData && !loading && reportData && (
+        <GameReportCard
+          reportData={reportData}
+          badge={{ icon:"✅", title:`${serverData.game.wave_team} ${serverData.official.wave_score}–${serverData.official.opp_score} ${serverData.game.opponent}`,
+                   sub: `✅ Official · Approved ${new Date(serverData.official.finalized_at).toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"})}`,
+                   bg: "linear-gradient(135deg,#166534,#15803d)" }}
+          exporting={exporting}
+          onPDF={handlePDF}
+        />
+      )}
     </div>
   );
 }
@@ -5523,145 +5733,71 @@ function OfficialReports({ db, submittedGames }) {
 // ─── Tournament Report ────────────────────────────────────────────────────────
 function TournamentReport({ db }) {
   const tournaments = [...new Set(db.games.map(g => g.tournament || "Unnamed"))];
-  const [selected, setSelected] = useState(tournaments[0] || "");
+  const [selected,  setSelected]  = useState(tournaments[0] || "");
+  const [exporting, setExporting] = useState(false);
 
-  const games = db.games.filter(g => (g.tournament || "Unnamed") === selected);
-  const allEvents = games.flatMap(g => g.events);
+  const games = db.games.filter(g => (g.tournament||"Unnamed") === selected);
+  const reportData = games.length ? buildTrackerReport(games, db, `🏆 ${selected}`, `${games.length} game${games.length!==1?"s":""}`, "tournament") : null;
 
-  const statKeys = ["goal","assist","shot","steal","block","turnover","kickout","kickout_earned","swimoff"];
-
-  // Aggregate per player across tournament
-  const playerRows = db.players.map(p => {
-    const s = playerStats(allEvents, p.id);
-    return { player: p, stats: s, total: Object.values(s).reduce((a,b)=>a+b,0) };
-  }).filter(r => r.total > 0).sort((a,b) => (b.stats.goal||0) - (a.stats.goal||0));
+  async function handlePDF() {
+    if (!reportData) return;
+    setExporting(true);
+    try { await exportReportPDF(reportData, selected); }
+    catch(e) { alert("PDF error: "+e.message); }
+    setExporting(false);
+  }
 
   return (
     <div>
       {tournaments.length > 1 && (
-        <div style={{ padding: "0 16px 12px" }}>
+        <div style={{ padding:"0 16px 12px" }}>
           <label className="form-label">Tournament</label>
           <select className="form-input form-select" value={selected} onChange={e => setSelected(e.target.value)}>
             {tournaments.map(t => <option key={t}>{t}</option>)}
           </select>
         </div>
       )}
-
-      <div className="section">
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">🏆 {selected}</span>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>{games.length} game(s)</span>
-          </div>
-          {playerRows.length === 0 ? (
-            <div className="card-body"><span style={{ color: "var(--muted)", fontSize: 13 }}>No stats recorded yet.</span></div>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table className="stat-table">
-                <thead>
-                  <tr><th>Player</th><th>G</th><th>A</th><th>SH</th><th>ST</th><th>BL</th><th>TO</th><th>KO</th><th>KOE</th></tr>
-                </thead>
-                <tbody>
-                  {playerRows.map(({ player, stats }) => {
-                    const team = db.teams.find(t => t.id === player.teamId);
-                    return (
-                      <tr key={player.id}>
-                        <td>
-                          <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: team?.color, marginRight: 6 }} />
-                          #{player.number} {player.name}
-                        </td>
-                        {statKeys.map(k => <td key={k} className={stats[k] ? "highlight" : ""}>{stats[k] || "—"}</td>)}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
+      {!reportData && <div style={{ padding:"24px 16px", color:"var(--muted)", fontSize:13, textAlign:"center" }}>No games tracked for this tournament yet.</div>}
+      {reportData && (
+        <GameReportCard
+          reportData={reportData}
+          badge={{ icon:"🏆", title:selected, sub:`${games.length} game${games.length!==1?"s":""}`, bg:"linear-gradient(135deg,#92400e,#b45309)" }}
+          exporting={exporting}
+          onPDF={handlePDF}
+        />
+      )}
     </div>
   );
 }
 
-// ─── Season Leaders ───────────────────────────────────────────────────────────
+// ─── Season Report ────────────────────────────────────────────────────────────
 function SeasonReport({ db }) {
-  const allEvents = db.games.flatMap(g => g.events);
+  const [exporting, setExporting] = useState(false);
+  const reportData = db.games.length ? buildTrackerReport(db.games, db, `${db.season||"Season"} Report`, `${db.games.length} game${db.games.length!==1?"s":""}`, "season") : null;
 
-  const categories = [
-    { key: "goal",         label: "Goals",         icon: "🥅" },
-    { key: "assist",       label: "Assists",        icon: "🤝" },
-    { key: "shot",         label: "Shots",          icon: "🎯" },
-    { key: "steal",        label: "Steals",         icon: "✋" },
-    { key: "block",        label: "Blocks",         icon: "🛡" },
-    { key: "kickout",      label: "Kick Outs",      icon: "🚫" },
-    { key: "kickout_earned", label: "KO Earned",    icon: "⚡" },
-  ];
-
-  function leaders(statKey, n = 5) {
-    return db.players.map(p => {
-      const s = playerStats(allEvents, p.id);
-      return { player: p, count: s[statKey] || 0 };
-    }).filter(r => r.count > 0).sort((a,b) => b.count - a.count).slice(0, n);
+  async function handlePDF() {
+    if (!reportData) return;
+    setExporting(true);
+    try { await exportReportPDF(reportData, db.season||"Season"); }
+    catch(e) { alert("PDF error: "+e.message); }
+    setExporting(false);
   }
 
-  return (
-    <div>
-      {categories.map(cat => {
-        const top = leaders(cat.key);
-        if (top.length === 0) return null;
-        return (
-          <div key={cat.key} className="section">
-            <div className="card">
-              <div className="card-header">
-                <span className="card-title">{cat.icon} {cat.label} Leaders</span>
-              </div>
-              <div>
-                {top.map((r, i) => {
-                  const team = db.teams.find(t => t.id === r.player.teamId);
-                  return (
-                    <div key={r.player.id} className="list-row">
-                      <div style={{ fontFamily: "var(--font-display)", fontSize: 22, color: i === 0 ? "#f59e0b" : i === 1 ? "#94a3b8" : i === 2 ? "#cd7f32" : "var(--muted)", minWidth: 28, textAlign: "center" }}>
-                        {i + 1}
-                      </div>
-                      <div className="team-dot" style={{ background: team?.color }} />
-                      <div className="list-row-main">
-                        <div className="list-row-name">#{r.player.number} {r.player.name}</div>
-                        <div className="list-row-sub">{team?.name}</div>
-                      </div>
-                      <div style={{ fontFamily: "var(--font-display)", fontSize: 28, color: i === 0 ? "#f59e0b" : "var(--accent)" }}>{r.count}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-
-      <div className="section">
-        <div className="card">
-          <div className="card-header"><span className="card-title">📅 Season Summary</span></div>
-          <div className="card-body">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-              {[
-                { label: "Games",   value: db.games.length },
-                { label: "Teams",   value: db.teams.length },
-                { label: "Players", value: db.players.length },
-                { label: "Goals",   value: allEvents.filter(isGoalFor).length },
-                { label: "Steals",  value: allEvents.filter(e=>e.stat==="steal").length },
-                { label: "Events",  value: allEvents.length },
-              ].map(s => (
-                <div key={s.label} style={{ textAlign: "center", background: "var(--surface2)", borderRadius: 10, padding: "12px 8px" }}>
-                  <div style={{ fontFamily: "var(--font-display)", fontSize: 30, color: "var(--accent)" }}>{s.value}</div>
-                  <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", marginTop: 4 }}>{s.label}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
+  if (!reportData) return (
+    <div className="empty" style={{ padding:"40px 24px" }}>
+      <div className="empty-icon">📊</div>
+      <div className="empty-title">No games yet</div>
+      <div className="empty-sub">Track some games to see your season report.</div>
     </div>
+  );
+
+  return (
+    <GameReportCard
+      reportData={reportData}
+      badge={{ icon:"📊", title:db.season||"Season Report", sub:`${db.games.length} game${db.games.length!==1?"s":""}`, bg:"linear-gradient(135deg,#1e3a6e,#003087)" }}
+      exporting={exporting}
+      onPDF={handlePDF}
+    />
   );
 }
 
