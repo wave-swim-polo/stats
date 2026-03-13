@@ -443,7 +443,7 @@ function App() {
           {hasAi && (
             <button className={"nav-btn" + (screen === "ask" ? " active" : "")} onClick={() => setScreen("ask")}>
               <span className="nav-icon">🤖</span>
-              Ask Mika
+              Ask SkipShot
             </button>
           )}
         </nav>
@@ -453,7 +453,7 @@ function App() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ASK MIKA  — natural language stats queries via Gemini (named after Mikasa)
+// ASK SKIPSHOT  — natural language stats queries via Gemini
 // ═══════════════════════════════════════════════════════════════════════════════
 function AskScreen({ clubName }) {
   const [question, setQuestion]   = useState("");
@@ -522,7 +522,7 @@ function AskScreen({ clubName }) {
 
       {/* Header */}
       <div style={{ background: "var(--navy)", padding: "20px 16px 16px", borderBottom: "3px solid var(--gold)", flexShrink: 0 }}>
-        <div style={{ fontFamily: "var(--font-display)", fontSize: 28, color: "#fff", letterSpacing: 1 }}>🤖 Ask Mika</div>
+        <div style={{ fontFamily: "var(--font-display)", fontSize: 28, color: "#fff", letterSpacing: 1 }}>🤖 Ask SkipShot</div>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginTop: 3 }}>{clubName} · All approved games · Powered by Gemini</div>
       </div>
 
@@ -547,7 +547,7 @@ function AskScreen({ clubName }) {
               </button>
             )}
             <button onClick={() => handleAsk()} disabled={loading || !question.trim()} style={{ flex: 1, padding: "11px 16px", borderRadius: 10, border: "none", background: question.trim() && !loading ? "var(--navy)" : "var(--border)", color: question.trim() && !loading ? "#fff" : "var(--muted)", fontSize: 14, fontWeight: 700, cursor: question.trim() && !loading ? "pointer" : "default", transition: "background .15s" }}>
-              {loading ? "⏳ Thinking…" : "✨ Ask Mika"}
+              {loading ? "⏳ Thinking…" : "✨ Ask SkipShot"}
             </button>
           </div>
         </div>
@@ -571,7 +571,7 @@ function AskScreen({ clubName }) {
         {loading && (
           <div style={{ background: "var(--surface)", borderRadius: 14, border: "1px solid var(--border)", padding: "20px 16px", textAlign: "center" }}>
             <div style={{ fontSize: 28, marginBottom: 8 }}>🤖</div>
-            <div style={{ fontSize: 13, color: "var(--muted)" }}>Mika is analysing {clubName} stats…</div>
+            <div style={{ fontSize: 13, color: "var(--muted)" }}>SkipShot is analysing {clubName} stats…</div>
           </div>
         )}
 
@@ -581,7 +581,7 @@ function AskScreen({ clubName }) {
 
             {/* Text answer */}
             <div style={{ background: "var(--surface)", padding: "16px 16px 14px" }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".8px", textTransform: "uppercase", color: "var(--navy)", marginBottom: 10 }}>Mika says…</div>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".8px", textTransform: "uppercase", color: "var(--navy)", marginBottom: 10 }}>SkipShot says…</div>
               <div style={{ fontSize: 15, lineHeight: 1.75, color: "var(--text)" }}>{answer}</div>
             </div>
 
@@ -617,7 +617,7 @@ function AskScreen({ clubName }) {
             <div style={{ background: "var(--surface)", padding: "10px 16px 14px", borderTop: "1px solid var(--border)" }}>
               {meta && <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10, textAlign: "right" }}>{meta}</div>}
               <button onClick={() => { setAnswer(null); setTable(null); setMeta(null); setQuestion(""); }} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1.5px solid var(--border)", background: "var(--bg)", fontSize: 13, color: "var(--muted)", cursor: "pointer", fontWeight: 600 }}>
-                Ask Mika another question
+                Ask SkipShot another question
               </button>
             </div>
           </div>
@@ -1336,7 +1336,7 @@ function GameListScreen({ db, update, creating, showNewGame, setShowNewGame, han
             </div>
             <div style={{ borderTop: "1px solid var(--border)" }}>
               <button onClick={() => setOfficialKey(g.game_key)} style={{ width: "100%", padding: "9px 0", background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#166534" }}>
-                ✅ View Official Report
+                📖 Read Report
               </button>
             </div>
           </div>
