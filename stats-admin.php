@@ -54,6 +54,13 @@ try {
     unset($pr);
 } catch (Exception $e) {} // table may not exist yet on old DBs
 
+// Build set of game_keys that already have a published report
+$pushedGameKeys = [];
+foreach ($publishedReports as $pr) {
+    $gk = $pr['data']['game_key'] ?? '';
+    if ($gk) $pushedGameKeys[$gk] = date('M j, Y', strtotime($pr['published_at']));
+}
+
 // ── Load published reports ────────────────────────────────────────────────────
 $games = $db->query("
     SELECT g.*, COUNT(s.id) as sub_count,
@@ -283,7 +290,7 @@ function reload() {
         <a href="?t=<?=$T?>&view=teams"       class="<?=$view==='teams'?'on':''?>">🏷 Opponents</a>
         <a href="?t=<?=$T?>&view=tournaments" class="<?=$view==='tournaments'?'on':''?>">🏆 Tournaments</a>
         <a href="?t=<?=$T?>&view=reports"     class="<?=$view==='reports'?'on':''?>">📣 Reports</a>
-        <a href="?t=<?=$T?>&view=ask"         class="<?=$view==='ask'?'on':''?>">🤖 Ask Mika</a>
+        <a href="?t=<?=$T?>&view=ask"         class="<?=$view==='ask'?'on':''?>">🤖 Ask SkipShot</a>
         <a href="?t=<?=$T?>&view=settings"     class="<?=$view==='settings'?'on':'' ?>">⚙️ Settings</a>
         <a href="https://stats.ottawawaterpolo.com/" target="_blank" style="margin-left:auto;opacity:.7">📱 Front-End ↗</a>
     </nav>
@@ -941,12 +948,12 @@ sort($distinctTournaments);
     </div>
 </div>
 
-<!-- ── Ask Mika teaser ── -->
+<!-- ── Ask SkipShot teaser ── -->
 <div class="card" style="margin-bottom:16px;border:1.5px solid rgba(66,133,244,.25);background:linear-gradient(135deg,rgba(66,133,244,.03),rgba(52,168,83,.03))">
     <div class="card-body" style="display:flex;align-items:center;gap:14px;padding:14px 16px">
         <div style="font-size:32px">🤖</div>
         <div style="flex:1">
-            <div style="font-weight:700;font-size:14px;color:var(--navy);margin-bottom:2px">Ask Mika</div>
+            <div style="font-weight:700;font-size:14px;color:var(--navy);margin-bottom:2px">Ask SkipShot</div>
             <div style="font-size:12px;color:var(--muted)">Ask plain-English questions about your stats — powered by Gemini.</div>
         </div>
         <a href="?t=<?=$T?>&view=ask" class="btn btn-navy btn-sm" style="white-space:nowrap">Open →</a>
@@ -1092,6 +1099,283 @@ document.getElementById('rpt-tournament').addEventListener('change', checkPrefli
 document.getElementById('rpt-season-sel').addEventListener('change', checkPreflight);
 
 // ── Generate report ─────────────────────────────────────────────────────────
+// ── Published report list: expand/collapse, sort, PDF ────────────────────────
+function toggleRptRow(rk, rowEl) {
+    const body    = document.getElementById('rpt-body-' + rk);
+    const chevron = rowEl.querySelector('.rpt-row-chevron');
+    const isOpen  = body.style.display !== 'none';
+    if (isOpen) {
+        body.style.display = 'none';
+        chevron.style.transform = '';
+    } else {
+        const inner = body.querySelector('.rpt-body-inner');
+        if (!inner.innerHTML.trim()) {
+            const data = window['_rptStored_' + rk];
+            inner.innerHTML = data && data.sections ? renderReportHTML(data) : '<p style="color:var(--muted)">No data.</p>';
+        }
+        body.style.display = '';
+        chevron.style.transform = 'rotate(180deg)';
+    }
+}
+
+function sortReportList(mode) {
+    const list = document.getElementById('rpt-list');
+    if (!list) return;
+    const rows = [...list.querySelectorAll('.rpt-list-row')];
+    rows.sort((a, b) => {
+        if (mode === 'newest') return parseInt(b.dataset.ts) - parseInt(a.dataset.ts);
+        if (mode === 'oldest') return parseInt(a.dataset.ts) - parseInt(b.dataset.ts);
+        if (mode === 'title')  return a.dataset.title.localeCompare(b.dataset.title);
+        if (mode === 'type')   return a.dataset.scope.localeCompare(b.dataset.scope);
+        return 0;
+    });
+    rows.forEach(r => list.appendChild(r));
+}
+
+function printStoredReport(rk) {
+    const data = window['_rptStored_' + rk];
+    if (!data) { toast('⚠️ No data for this report'); return; }
+    const title   = data.title || 'Report';
+    const content = renderReportHTML(data);
+    const win = window.open('', '_blank');
+    win.document.write(`<!DOCTYPE html><html><head>
+        <meta charset="utf-8">
+        <title>${title}</title>
+        <style>
+            body { font-family: system-ui, sans-serif; font-size: 13px; color: #1a2235; padding: 24px; max-width: 900px; margin: 0 auto; }
+            table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 8px; }
+            th { background: #003087; color: #fff; padding: 6px 10px; text-align: left; font-size: 11px; }
+            th:not(:first-child):not(:nth-child(2)) { text-align: center; }
+            td { padding: 5px 10px; border-bottom: 1px solid #e2e8f0; }
+            td:not(:first-child):not(:nth-child(2)) { text-align: center; }
+            tr:nth-child(even) { background: #f8fafc; }
+            h2 { font-size: 16px; color: #003087; border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; margin: 20px 0 10px; }
+            svg { max-width: 100%; }
+            @media print { body { padding: 0; } }
+        </style>
+    </head><body>
+        <h1 style="font-size:20px;color:#003087;margin-bottom:4px">${title}</h1>
+        ${content}
+        <script>window.onload = function(){ window.print(); }<\/script>
+    </body></html>`);
+    win.document.close();
+}
+</script>
+<?php elseif ($view === 'ask'): ?>
+<div style="font-family:var(--fd);font-size:28px;color:var(--navy);margin-bottom:4px">🤖 Ask SkipShot</div>
+<div style="font-size:13px;color:var(--muted);margin-bottom:20px">Ask plain-English questions about your stats. Powered by Gemini 2.5 Flash.</div>
+
+<?php if(!empty($settings['gemini_api_key'])): ?>
+<div class="card" style="border:1.5px solid rgba(66,133,244,.3);background:linear-gradient(135deg,rgba(66,133,244,.04),rgba(52,168,83,.04))">
+    <div class="card-body">
+
+        <!-- Scope -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+            <button class="btn ai-scope-btn on" data-scope="game"       onclick="setAiScope('game')">Single Game</button>
+            <button class="btn ai-scope-btn"    data-scope="tournament" onclick="setAiScope('tournament')">Tournament</button>
+            <button class="btn ai-scope-btn"    data-scope="all"        onclick="setAiScope('all')">All Games</button>
+        </div>
+
+        <!-- Game picker -->
+        <div id="ai-sel-game" style="margin-bottom:12px">
+            <label class="lbl">Game</label>
+            <select class="inp" id="ai-game-key">
+                <option value="">— select a game —</option>
+                <?php foreach($games as $g): if(!isset($offMap[$g['game_key']])) continue; ?>
+                <option value="<?=htmlspecialchars($g['game_key'])?>"><?=htmlspecialchars(date('M j Y',strtotime($g['game_date'])).' · '.$g['wave_team'].' vs '.$g['opponent'].($g['tournament']?' ('.$g['tournament'].')':''))?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+
+        <!-- Tournament picker -->
+        <div id="ai-sel-tournament" style="margin-bottom:12px;display:none">
+            <label class="lbl">Tournament</label>
+            <select class="inp" id="ai-tournament">
+                <option value="">— select a tournament —</option>
+                <?php foreach($distinctTournaments as $tn): ?>
+                <option value="<?=htmlspecialchars($tn)?>"><?=htmlspecialchars($tn)?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+
+        <!-- Question input -->
+        <div style="margin-bottom:12px">
+            <label class="lbl">Your Question</label>
+            <div style="display:flex;gap:8px">
+                <input class="inp" id="ai-question" placeholder="e.g. Who had the most assists? What was our man-up conversion rate?" style="flex:1" onkeydown="if(event.key==='Enter')askData()">
+                <button class="btn btn-ghost" onclick="toggleSpeech()" id="ai-mic-btn" title="Ask by voice" style="white-space:nowrap;display:none">🎤</button>
+                <button class="btn btn-navy" onclick="askData()" id="ai-ask-btn" style="white-space:nowrap">✨ Ask SkipShot</button>
+            </div>
+        </div>
+
+        <!-- Suggested questions -->
+        <div style="margin-bottom:14px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Suggested</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px" id="ai-suggestions">
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Who had the most assists?</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">What was our man-up conversion rate?</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Which goalie had the best save percentage?</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">What zone did we score from most?</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Compare first half vs second half shooting.</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Who drew the most kickouts?</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">What was our record this season?</button>
+                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Who was our top scorer overall?</button>
+            </div>
+        </div>
+
+        <!-- Answer area -->
+        <div id="ai-answer-wrap" style="display:none">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">SkipShot says…</div>
+            <div id="ai-answer" style="background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.8;white-space:pre-wrap;color:var(--txt)"></div>
+            <div id="ai-answer-meta" style="font-size:11px;color:var(--muted);margin-top:6px;text-align:right"></div>
+        </div>
+        <div id="ai-error" style="display:none;padding:10px 14px;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:8px;font-size:13px;color:#b91c1c"></div>
+    </div>
+</div>
+<?php else: ?>
+<div class="card" style="opacity:.8">
+    <div class="card-body" style="text-align:center;padding:32px 20px">
+        <div style="font-size:40px;margin-bottom:12px">🤖</div>
+        <div style="font-weight:700;font-size:16px;color:var(--navy);margin-bottom:8px">SkipShot needs a Gemini key</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Add your Gemini API key in Settings to enable Ask SkipShot.</div>
+        <a href="?t=<?=$T?>&view=settings" class="btn btn-navy">⚙️ Go to Settings</a>
+    </div>
+</div>
+<?php endif; ?>
+<script>
+const TOKEN = '<?=addslashes($token)?>';
+async function api(body) {
+    const r = await fetch('stats-api.php?t='+encodeURIComponent(TOKEN)+'&_='+Date.now(), {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({...body, token: TOKEN})
+    });
+    const text = await r.text();
+    if (!r.ok) return {ok:false, error:'HTTP '+r.status+': '+text.slice(0,200)};
+    try { return JSON.parse(text); } catch(e) { return {ok:false, error:'Bad JSON: '+text.slice(0,200)}; }
+}
+function toast(msg,dur=3000){const t=document.getElementById('toast');t.textContent=msg;t.style.display='block';clearTimeout(t._t);t._t=setTimeout(()=>t.style.display='none',dur);}
+
+// ── Ask SkipShot ────────────────────────────────────────────────────────────────────
+let _aiScope = 'game';
+
+function setAiScope(s) {
+  _aiScope = s;
+  document.querySelectorAll('.ai-scope-btn').forEach(b => b.classList.toggle('on', b.dataset.scope === s));
+  document.getElementById('ai-sel-game').style.display       = s === 'game'       ? '' : 'none';
+  document.getElementById('ai-sel-tournament').style.display = s === 'tournament' ? '' : 'none';
+}
+
+function setSuggestedQ(btn) {
+  const inp = document.getElementById('ai-question');
+  if (inp) { inp.value = btn.textContent.trim(); inp.focus(); }
+}
+
+async function askData() {
+  const question = document.getElementById('ai-question')?.value?.trim();
+  if (!question) { document.getElementById('ai-question').focus(); return; }
+
+  const body = { action: 'ask_data', question, scope: _aiScope };
+  if (_aiScope === 'game')       body.game_key   = document.getElementById('ai-game-key')?.value || '';
+  if (_aiScope === 'tournament') body.tournament = document.getElementById('ai-tournament')?.value || '';
+
+  const answerWrap = document.getElementById('ai-answer-wrap');
+  const answerEl   = document.getElementById('ai-answer');
+  const metaEl     = document.getElementById('ai-answer-meta');
+  const errorEl    = document.getElementById('ai-error');
+  const btn        = document.getElementById('ai-ask-btn');
+
+  answerWrap.style.display = 'none';
+  errorEl.style.display    = 'none';
+  btn.textContent = '⏳ Thinking…';
+  btn.disabled    = true;
+
+  const t0 = Date.now();
+  const j  = await api(body);
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+
+  btn.textContent = '✨ Ask SkipShot';
+  btn.disabled    = false;
+
+  if (!j.ok) {
+    errorEl.textContent  = '⚠️ ' + (j.error || 'Something went wrong');
+    errorEl.style.display = '';
+    return;
+  }
+
+  answerEl.textContent  = j.answer || '(no answer returned)';
+  metaEl.textContent    = `Gemini 2.5 Flash · ${elapsed}s · ${j.games_used ?? '?'} game${(j.games_used??0)!==1?'s':''} analysed`;
+  answerWrap.style.display = '';
+}
+
+// ── Voice Input ──────────────────────────────────────────────────────────────
+(function initSpeech() {
+  // Only show mic on touch devices with SpeechRecognition support
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR || !('ontouchstart' in window)) return;
+
+  const micBtn = document.getElementById('ai-mic-btn');
+  if (!micBtn) return;
+  micBtn.style.display = '';  // reveal the button
+
+  let recognition = null;
+  let listening = false;
+
+  micBtn.addEventListener('click', toggleSpeech);
+
+  window.toggleSpeech = function() {
+    if (listening) {
+      recognition?.stop();
+      return;
+    }
+
+    recognition = new SR();
+    recognition.lang = 'en-CA';
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    const inp = document.getElementById('ai-question');
+    const originalPlaceholder = inp.placeholder;
+
+    recognition.onstart = () => {
+      listening = true;
+      micBtn.textContent = '🔴';
+      micBtn.title = 'Tap to stop';
+      inp.value = '';
+      inp.placeholder = 'Listening…';
+      inp.style.outline = '2px solid #ef4444';
+    };
+
+    recognition.onresult = (e) => {
+      const transcript = Array.from(e.results)
+        .map(r => r[0].transcript)
+        .join('');
+      inp.value = transcript;
+    };
+
+    recognition.onend = () => {
+      listening = false;
+      micBtn.textContent = '🎤';
+      micBtn.title = 'Ask by voice';
+      inp.placeholder = originalPlaceholder;
+      inp.style.outline = '';
+      // Focus the input so they can review before tapping Ask
+      if (inp.value.trim()) inp.focus();
+    };
+
+    recognition.onerror = (e) => {
+      listening = false;
+      micBtn.textContent = '🎤';
+      inp.placeholder = originalPlaceholder;
+      inp.style.outline = '';
+      if (e.error !== 'aborted') toast('🎤 ' + (e.error === 'not-allowed' ? 'Mic permission denied' : 'Speech error: ' + e.error));
+    };
+
+    recognition.start();
+  };
+})();
+</script>
+<?php elseif ($view !== 'settings'): ?>
+<script>
 // ── Crunch all stats from games array ──────────────────────────────────────
 function crunchReportData(games, title, subtitle, scope) {
     // Aggregate all events across all games
@@ -1717,283 +2001,7 @@ document.head.insertAdjacentHTML('beforeend', `<style>
 .ai-scope-btn { background:#f1f5f9; color:var(--txt); border:1px solid var(--bdr); padding:7px 16px; border-radius:6px; font-size:13px; font-weight:600; }
 .ai-scope-btn.on { background:var(--navy); color:#fff; border-color:var(--navy); }
 </style>`);
-
-// ── Published report list: expand/collapse, sort, PDF ────────────────────────
-function toggleRptRow(rk, rowEl) {
-    const body    = document.getElementById('rpt-body-' + rk);
-    const chevron = rowEl.querySelector('.rpt-row-chevron');
-    const isOpen  = body.style.display !== 'none';
-    if (isOpen) {
-        body.style.display = 'none';
-        chevron.style.transform = '';
-    } else {
-        const inner = body.querySelector('.rpt-body-inner');
-        if (!inner.innerHTML.trim()) {
-            const data = window['_rptStored_' + rk];
-            inner.innerHTML = data && data.sections ? renderReportHTML(data) : '<p style="color:var(--muted)">No data.</p>';
-        }
-        body.style.display = '';
-        chevron.style.transform = 'rotate(180deg)';
-    }
-}
-
-function sortReportList(mode) {
-    const list = document.getElementById('rpt-list');
-    if (!list) return;
-    const rows = [...list.querySelectorAll('.rpt-list-row')];
-    rows.sort((a, b) => {
-        if (mode === 'newest') return parseInt(b.dataset.ts) - parseInt(a.dataset.ts);
-        if (mode === 'oldest') return parseInt(a.dataset.ts) - parseInt(b.dataset.ts);
-        if (mode === 'title')  return a.dataset.title.localeCompare(b.dataset.title);
-        if (mode === 'type')   return a.dataset.scope.localeCompare(b.dataset.scope);
-        return 0;
-    });
-    rows.forEach(r => list.appendChild(r));
-}
-
-function printStoredReport(rk) {
-    const data = window['_rptStored_' + rk];
-    if (!data) { toast('⚠️ No data for this report'); return; }
-    const title   = data.title || 'Report';
-    const content = renderReportHTML(data);
-    const win = window.open('', '_blank');
-    win.document.write(`<!DOCTYPE html><html><head>
-        <meta charset="utf-8">
-        <title>${title}</title>
-        <style>
-            body { font-family: system-ui, sans-serif; font-size: 13px; color: #1a2235; padding: 24px; max-width: 900px; margin: 0 auto; }
-            table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 8px; }
-            th { background: #003087; color: #fff; padding: 6px 10px; text-align: left; font-size: 11px; }
-            th:not(:first-child):not(:nth-child(2)) { text-align: center; }
-            td { padding: 5px 10px; border-bottom: 1px solid #e2e8f0; }
-            td:not(:first-child):not(:nth-child(2)) { text-align: center; }
-            tr:nth-child(even) { background: #f8fafc; }
-            h2 { font-size: 16px; color: #003087; border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; margin: 20px 0 10px; }
-            svg { max-width: 100%; }
-            @media print { body { padding: 0; } }
-        </style>
-    </head><body>
-        <h1 style="font-size:20px;color:#003087;margin-bottom:4px">${title}</h1>
-        ${content}
-        <script>window.onload = function(){ window.print(); }<\/script>
-    </body></html>`);
-    win.document.close();
-}
 </script>
-<?php elseif ($view === 'ask'): ?>
-<div style="font-family:var(--fd);font-size:28px;color:var(--navy);margin-bottom:4px">🤖 Ask Mika</div>
-<div style="font-size:13px;color:var(--muted);margin-bottom:20px">Ask plain-English questions about your stats. Powered by Gemini 2.5 Flash · Named after Mikasa, the official ball of water polo.</div>
-
-<?php if(!empty($settings['gemini_api_key'])): ?>
-<div class="card" style="border:1.5px solid rgba(66,133,244,.3);background:linear-gradient(135deg,rgba(66,133,244,.04),rgba(52,168,83,.04))">
-    <div class="card-body">
-
-        <!-- Scope -->
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-            <button class="btn ai-scope-btn on" data-scope="game"       onclick="setAiScope('game')">Single Game</button>
-            <button class="btn ai-scope-btn"    data-scope="tournament" onclick="setAiScope('tournament')">Tournament</button>
-            <button class="btn ai-scope-btn"    data-scope="all"        onclick="setAiScope('all')">All Games</button>
-        </div>
-
-        <!-- Game picker -->
-        <div id="ai-sel-game" style="margin-bottom:12px">
-            <label class="lbl">Game</label>
-            <select class="inp" id="ai-game-key">
-                <option value="">— select a game —</option>
-                <?php foreach($games as $g): if(!isset($offMap[$g['game_key']])) continue; ?>
-                <option value="<?=htmlspecialchars($g['game_key'])?>"><?=htmlspecialchars(date('M j Y',strtotime($g['game_date'])).' · '.$g['wave_team'].' vs '.$g['opponent'].($g['tournament']?' ('.$g['tournament'].')':''))?></option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-
-        <!-- Tournament picker -->
-        <div id="ai-sel-tournament" style="margin-bottom:12px;display:none">
-            <label class="lbl">Tournament</label>
-            <select class="inp" id="ai-tournament">
-                <option value="">— select a tournament —</option>
-                <?php foreach($distinctTournaments as $tn): ?>
-                <option value="<?=htmlspecialchars($tn)?>"><?=htmlspecialchars($tn)?></option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-
-        <!-- Question input -->
-        <div style="margin-bottom:12px">
-            <label class="lbl">Your Question</label>
-            <div style="display:flex;gap:8px">
-                <input class="inp" id="ai-question" placeholder="e.g. Who had the most assists? What was our man-up conversion rate?" style="flex:1" onkeydown="if(event.key==='Enter')askData()">
-                <button class="btn btn-ghost" onclick="toggleSpeech()" id="ai-mic-btn" title="Ask by voice" style="white-space:nowrap;display:none">🎤</button>
-                <button class="btn btn-navy" onclick="askData()" id="ai-ask-btn" style="white-space:nowrap">✨ Ask Mika</button>
-            </div>
-        </div>
-
-        <!-- Suggested questions -->
-        <div style="margin-bottom:14px">
-            <div style="font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Suggested</div>
-            <div style="display:flex;flex-wrap:wrap;gap:6px" id="ai-suggestions">
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Who had the most assists?</button>
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">What was our man-up conversion rate?</button>
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Which goalie had the best save percentage?</button>
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">What zone did we score from most?</button>
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Compare first half vs second half shooting.</button>
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Who drew the most kickouts?</button>
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">What was our record this season?</button>
-                <button class="btn btn-ghost btn-sm" onclick="setSuggestedQ(this)">Who was our top scorer overall?</button>
-            </div>
-        </div>
-
-        <!-- Answer area -->
-        <div id="ai-answer-wrap" style="display:none">
-            <div style="font-size:11px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Mika says…</div>
-            <div id="ai-answer" style="background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.8;white-space:pre-wrap;color:var(--txt)"></div>
-            <div id="ai-answer-meta" style="font-size:11px;color:var(--muted);margin-top:6px;text-align:right"></div>
-        </div>
-        <div id="ai-error" style="display:none;padding:10px 14px;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:8px;font-size:13px;color:#b91c1c"></div>
-    </div>
-</div>
-<?php else: ?>
-<div class="card" style="opacity:.8">
-    <div class="card-body" style="text-align:center;padding:32px 20px">
-        <div style="font-size:40px;margin-bottom:12px">🤖</div>
-        <div style="font-weight:700;font-size:16px;color:var(--navy);margin-bottom:8px">Mika needs a Gemini key</div>
-        <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Add your Gemini API key in Settings to enable Ask Mika.</div>
-        <a href="?t=<?=$T?>&view=settings" class="btn btn-navy">⚙️ Go to Settings</a>
-    </div>
-</div>
-<?php endif; ?>
-<script>
-const TOKEN = '<?=addslashes($token)?>';
-async function api(body) {
-    const r = await fetch('stats-api.php?t='+encodeURIComponent(TOKEN)+'&_='+Date.now(), {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({...body, token: TOKEN})
-    });
-    const text = await r.text();
-    if (!r.ok) return {ok:false, error:'HTTP '+r.status+': '+text.slice(0,200)};
-    try { return JSON.parse(text); } catch(e) { return {ok:false, error:'Bad JSON: '+text.slice(0,200)}; }
-}
-function toast(msg,dur=3000){const t=document.getElementById('toast');t.textContent=msg;t.style.display='block';clearTimeout(t._t);t._t=setTimeout(()=>t.style.display='none',dur);}
-
-// ── Ask Mika ────────────────────────────────────────────────────────────────────
-let _aiScope = 'game';
-
-function setAiScope(s) {
-  _aiScope = s;
-  document.querySelectorAll('.ai-scope-btn').forEach(b => b.classList.toggle('on', b.dataset.scope === s));
-  document.getElementById('ai-sel-game').style.display       = s === 'game'       ? '' : 'none';
-  document.getElementById('ai-sel-tournament').style.display = s === 'tournament' ? '' : 'none';
-}
-
-function setSuggestedQ(btn) {
-  const inp = document.getElementById('ai-question');
-  if (inp) { inp.value = btn.textContent.trim(); inp.focus(); }
-}
-
-async function askData() {
-  const question = document.getElementById('ai-question')?.value?.trim();
-  if (!question) { document.getElementById('ai-question').focus(); return; }
-
-  const body = { action: 'ask_data', question, scope: _aiScope };
-  if (_aiScope === 'game')       body.game_key   = document.getElementById('ai-game-key')?.value || '';
-  if (_aiScope === 'tournament') body.tournament = document.getElementById('ai-tournament')?.value || '';
-
-  const answerWrap = document.getElementById('ai-answer-wrap');
-  const answerEl   = document.getElementById('ai-answer');
-  const metaEl     = document.getElementById('ai-answer-meta');
-  const errorEl    = document.getElementById('ai-error');
-  const btn        = document.getElementById('ai-ask-btn');
-
-  answerWrap.style.display = 'none';
-  errorEl.style.display    = 'none';
-  btn.textContent = '⏳ Thinking…';
-  btn.disabled    = true;
-
-  const t0 = Date.now();
-  const j  = await api(body);
-  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-
-  btn.textContent = '✨ Ask Mika';
-  btn.disabled    = false;
-
-  if (!j.ok) {
-    errorEl.textContent  = '⚠️ ' + (j.error || 'Something went wrong');
-    errorEl.style.display = '';
-    return;
-  }
-
-  answerEl.textContent  = j.answer || '(no answer returned)';
-  metaEl.textContent    = `Gemini 2.5 Flash · ${elapsed}s · ${j.games_used ?? '?'} game${(j.games_used??0)!==1?'s':''} analysed`;
-  answerWrap.style.display = '';
-}
-
-// ── Voice Input ──────────────────────────────────────────────────────────────
-(function initSpeech() {
-  // Only show mic on touch devices with SpeechRecognition support
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR || !('ontouchstart' in window)) return;
-
-  const micBtn = document.getElementById('ai-mic-btn');
-  if (!micBtn) return;
-  micBtn.style.display = '';  // reveal the button
-
-  let recognition = null;
-  let listening = false;
-
-  micBtn.addEventListener('click', toggleSpeech);
-
-  window.toggleSpeech = function() {
-    if (listening) {
-      recognition?.stop();
-      return;
-    }
-
-    recognition = new SR();
-    recognition.lang = 'en-CA';
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-
-    const inp = document.getElementById('ai-question');
-    const originalPlaceholder = inp.placeholder;
-
-    recognition.onstart = () => {
-      listening = true;
-      micBtn.textContent = '🔴';
-      micBtn.title = 'Tap to stop';
-      inp.value = '';
-      inp.placeholder = 'Listening…';
-      inp.style.outline = '2px solid #ef4444';
-    };
-
-    recognition.onresult = (e) => {
-      const transcript = Array.from(e.results)
-        .map(r => r[0].transcript)
-        .join('');
-      inp.value = transcript;
-    };
-
-    recognition.onend = () => {
-      listening = false;
-      micBtn.textContent = '🎤';
-      micBtn.title = 'Ask by voice';
-      inp.placeholder = originalPlaceholder;
-      inp.style.outline = '';
-      // Focus the input so they can review before tapping Ask
-      if (inp.value.trim()) inp.focus();
-    };
-
-    recognition.onerror = (e) => {
-      listening = false;
-      micBtn.textContent = '🎤';
-      inp.placeholder = originalPlaceholder;
-      inp.style.outline = '';
-      if (e.error !== 'aborted') toast('🎤 ' + (e.error === 'not-allowed' ? 'Mic permission denied' : 'Speech error: ' + e.error));
-    };
-
-    recognition.start();
-  };
-})();
-</script>
-<?php elseif ($view !== 'settings'): ?>
 <script>
 const _gApiToken = '<?=addslashes($token)?>';
 async function _gApi(body) {
@@ -2122,7 +2130,12 @@ window.confirmDeleteAll = async function() {
                 <button class="btn btn-ghost btn-sm" onclick="openGameDrawer('<?=addslashes($g['game_key'])?>')" title="View full stats">👁 View</button>
                 <?php if($fin): ?>
                 <button class="btn btn-ghost btn-sm" onclick="downloadGamePdf('<?=addslashes($g['game_key'])?>','<?=addslashes($g['wave_team'].' vs '.$g['opponent'])?>')" title="Download PDF report">⬇ PDF</button>
+                <?php $pushedDate = $pushedGameKeys[$g['game_key']] ?? null; ?>
+                <?php if($pushedDate): ?>
+                <button class="btn btn-ghost btn-sm" style="color:var(--muted);cursor:default" title="Already pushed on <?=$pushedDate?>" disabled>✅ Pushed</button>
+                <?php else: ?>
                 <button class="btn btn-navy btn-sm" onclick="pushGameReport('<?=addslashes($g['game_key'])?>','<?=addslashes($g['wave_team'].' vs '.$g['opponent'])?>')" title="Publish report to end users">📣 Push</button>
+                <?php endif; ?>
                 <?php endif; ?>
                 <?php if($subCount === 0 && !$fin): ?>
                 <button class="btn btn-sm" style="background:rgba(239,68,68,.08);color:var(--danger);border:1px solid rgba(239,68,68,.25)"
@@ -2199,6 +2212,7 @@ window.confirmDeleteAll = async function() {
 
 <script>
 // ── Sortable games table ─────────────────────────────────────────────────────
+const _pushedGameKeys = <?=json_encode($pushedGameKeys)?>;
 let _sortDir = { date: -1, status: 1, subs: -1, opp: 1 };
 let _sortCur = 'date';
 function sortGames(col) {
@@ -2280,6 +2294,20 @@ async function openGameDrawer(gameKey) {
     if (fin && j.official) {
         document.getElementById('drawer-pdf-btn').style.display  = '';
         document.getElementById('drawer-push-btn').style.display = '';
+        const pushBtn = document.getElementById('drawer-push-btn');
+        if (_pushedGameKeys[gameKey]) {
+            pushBtn.textContent = '✅ Pushed';
+            pushBtn.disabled    = true;
+            pushBtn.title       = 'Already pushed on ' + _pushedGameKeys[gameKey];
+            pushBtn.className   = 'btn btn-ghost btn-sm';
+            pushBtn.style.color = 'var(--muted)';
+        } else {
+            pushBtn.textContent = '📣 Push to Users';
+            pushBtn.disabled    = false;
+            pushBtn.title       = '';
+            pushBtn.className   = 'btn btn-navy btn-sm';
+            pushBtn.style.color = '';
+        }
 
         // Build a synthetic single-game structure for crunchReportData
         const players = g.players || [];
@@ -2380,12 +2408,19 @@ async function pushDrawerReport() {
     const sub   = document.getElementById('drawer-subtitle').textContent;
     const btn   = document.getElementById('drawer-push-btn');
     btn.disabled = true; btn.textContent = '⏳ Pushing…';
+    const data = { ..._drawerGameData, game_key: _drawerGameKey };
     const j = await _gApi({ action: 'publish_report', data: {
-        type: 'game', title, subtitle: sub, season: '', data: _drawerGameData
+        type: 'game', title, subtitle: sub, season: '', data
     }});
-    btn.disabled = false; btn.textContent = '📣 Push to Users';
-    if (j.ok) { btn.textContent = '✅ Pushed!'; setTimeout(()=>btn.textContent='📣 Push to Users', 3000); }
-    else alert('⚠️ ' + (j.error||'Publish failed'));
+    if (j.ok) {
+        btn.textContent = '✅ Pushed!';
+        btn.className   = 'btn btn-ghost btn-sm';
+        btn.style.color = 'var(--muted)';
+        setTimeout(() => { closeGameDrawer(); location.reload(); }, 900);
+    } else {
+        btn.disabled = false; btn.textContent = '📣 Push to Users';
+        alert('⚠️ ' + (j.error||'Publish failed'));
+    }
 }
 
 // ── Game row: push without opening drawer ─────────────────────────────────────
@@ -2400,10 +2435,11 @@ async function pushGameReport(gameKey, label) {
         official_events: j.official.events||[], wave_score: j.official.wave_score, opp_score: j.official.opp_score,
     }];
     const data = crunchReportData(syntheticGame, label, '', 'game');
+    data.game_key = gameKey; // track which game this report belongs to
     const r = await _gApi({ action: 'publish_report', data: {
         type: 'game', title: label, subtitle: '', season: '', data
     }});
-    if (r.ok) alert('✅ Report published to end users!');
+    if (r.ok) { toast('✅ Report published to end users!'); setTimeout(() => location.reload(), 800); }
     else alert('⚠️ ' + (r.error||'Publish failed'));
 }
 
@@ -2487,7 +2523,7 @@ async function saveAiSettings() {
 <!-- ── AI / Gemini Settings ── -->
 <div style="max-width:600px;margin:24px auto;padding:0 20px 40px">
   <div style="font-family:var(--fd);font-size:22px;color:var(--navy);margin-bottom:4px">🤖 AI Settings</div>
-  <div style="font-size:13px;color:var(--muted);margin-bottom:20px">Powers the Ask Mika natural language analysis feature.</div>
+  <div style="font-size:13px;color:var(--muted);margin-bottom:20px">Powers the Ask SkipShot natural language analysis feature.</div>
   <div style="background:var(--sur);border:1px solid var(--bdr);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:20px">
     <div>
       <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Google Gemini API Key</label>
@@ -2500,11 +2536,11 @@ async function saveAiSettings() {
     </div>
     <?php if(!empty($settings['gemini_api_key'])): ?>
     <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(22,101,52,.07);border:1px solid rgba(22,101,52,.2);border-radius:8px;font-size:12px;color:#166534">
-      ✅ Gemini key is set — Ask Mika is ready to use.
+      ✅ Gemini key is set — Ask SkipShot is ready to use.
     </div>
     <?php else: ?>
     <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.25);border-radius:8px;font-size:12px;color:#92400e">
-      ⚠️ No key set — Ask Mika will be unavailable until you add one.
+      ⚠️ No key set — Ask SkipShot will be unavailable until you add one.
     </div>
     <?php endif; ?>
     <button class="btn btn-navy" onclick="saveAiSettings()" style="align-self:flex-start">&#x1F4BE; Save AI Settings</button>
