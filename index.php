@@ -1944,7 +1944,7 @@ function InlineOfficialSheet({ serverKey, db, onClose }) {
       wave_score: official.wave_score, opp_score: official.opp_score,
       players: g.players || [], official_events: official.events || [],
     };
-    return crunchTrackerReport([adminGame],
+    return crunchReportData([adminGame],
       `${g.wave_team} vs ${g.opponent}`,
       [g.tournament, new Date(g.game_date+"T12:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"})].filter(Boolean).join(" · "),
       "game");
@@ -5534,7 +5534,7 @@ function OfficialReports({ db, submittedGames }) {
       wave_score: official.wave_score, opp_score: official.opp_score,
       players: g.players || [], official_events: official.events || [],
     };
-    return crunchTrackerReport([adminGame], `${g.wave_team} vs ${g.opponent}`,
+    return crunchReportData([adminGame], `${g.wave_team} vs ${g.opponent}`,
       [g.tournament, new Date(g.game_date+"T12:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"})].filter(Boolean).join(" · "),
       "game");
   })() : null;
