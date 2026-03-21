@@ -469,11 +469,8 @@ function App() {
             </button>
           )}
           <button className={"nav-btn" + (screen === "watch" ? " active" : "")} onClick={() => setScreen("watch")} style={{ position: "relative" }}>
-            <span className="nav-icon">📺</span>
+            <span className="nav-icon" style={liveGames.length > 0 ? { display: "inline-block", animation: "livePulse 1.5s ease-in-out infinite" } : {}}>📺</span>
             Watch
-            {liveGames.length > 0 && (
-              <span style={{ position: "absolute", top: 4, right: 6, width: 8, height: 8, borderRadius: "50%", background: "#ef4444", animation: "livePulse 1.5s ease-in-out infinite" }}/>
-            )}
           </button>
         </nav>
       </div>
@@ -491,10 +488,24 @@ const LIVE_STAT_LABELS = {
   penalty_5m_goal_for:'Penalty goal', penalty_5m_miss_for:'Penalty miss',
   penalty_5m_goal_against:'Penalty (against)', penalty_5m_block:'Penalty blocked',
 };
+// Icons match FIELD_STATS / GOALIE_STATS so tracker and live viewer look identical
 const LIVE_STAT_EMOJI = {
-  goal:'⚽', assist:'🤽', shot:'🥅', save:'🧤', steal:'🫳', block:'✋',
-  kickout:'🚫', kickout_earned:'📣', turnover:'🔄', goals_against:'❌',
-  shot_against:'🥅', penalty_5m_goal_for:'⚽', penalty_5m_goal_against:'❌',
+  goal:                   '🥅',
+  assist:                 '🤝',
+  shot:                   '🎯',
+  save:                   '🧤',
+  steal:                  '✋',
+  block:                  '🛡',
+  kickout:                '🚫',
+  kickout_earned:         '⚡',
+  swimoff:                '🏊',
+  turnover:               '🔄',
+  goals_against:          '🥅',
+  shot_against:           '🎯',
+  penalty_5m_goal_for:    '🔵',
+  penalty_5m_miss_for:    '🔵',
+  penalty_5m_goal_against:'🔴',
+  penalty_5m_block:       '🧤',
 };
 const PERIODS_ALL = ['1Q','2Q','3Q','4Q','OT','SO'];
 
@@ -544,24 +555,32 @@ function LiveGameList({ games, onWatch }) {
 
 function LiveGameView({ gameKey, onBack }) {
   const [data,        setData]        = useState(null);
+  const feedRef = useRef(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [error,       setError]       = useState(null);
   const [secsAgo,     setSecsAgo]     = useState(0);
 
-  // Poll game state every 5s
+  // Poll game state every 5s, stop automatically when game ends
+  const pollStopRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
+    pollStopRef.current = false;
     const poll = async () => {
       try {
         const r = await fetch(`${SERVER_URL}?action=get_live_game&game_key=${encodeURIComponent(gameKey)}&_=${Date.now()}`);
         const j = await r.json();
         if (cancelled) return;
-        if (j.ok) { setData(j.game); setLastUpdated(new Date()); setSecsAgo(0); setError(null); }
-        else setError(j.error || 'Game not found');
+        if (j.ok) {
+          setData(j.game);
+          setLastUpdated(new Date());
+          setSecsAgo(0);
+          setError(null);
+          if (!j.game.is_live) pollStopRef.current = true; // signal interval to stop
+        } else setError(j.error || 'Game not found');
       } catch { if (!cancelled) setError('Could not reach server'); }
     };
     poll();
-    const pollT = setInterval(poll, 5000);
+    const pollT = setInterval(() => { if (!pollStopRef.current) poll(); }, 5000);
     const agoT  = setInterval(() => setSecsAgo(s => s + 1), 1000);
     return () => { cancelled = true; clearInterval(pollT); clearInterval(agoT); };
   }, [gameKey]);
@@ -580,19 +599,41 @@ function LiveGameView({ gameKey, onBack }) {
 
   // Period dots
   const periodIdx  = PERIODS_ALL.indexOf(period);
+
+  // Scroll feed to top whenever new events arrive (use events not feedEvents — feedEvents isn't defined yet)
+  useEffect(() => {
+    if (feedRef.current) feedRef.current.scrollTop = 0;
+  }, [events.length]);
   const periodDots = ['1Q','2Q','3Q','4Q'].map((p, i) => {
     const done    = periodIdx > i;
     const current = periodIdx === i;
     return <span key={p} style={{ width:8, height:8, borderRadius:'50%', background: done||current ? 'var(--gold)' : 'rgba(255,255,255,0.3)', display:'inline-block', margin:'0 2px', transform: current ? 'scale(1.3)' : 'none', transition:'all .3s' }}/>;
   });
 
-  // Events newest-first, only wave events for feed (opp goals shown too)
-  const oppOnlyStats = new Set(['goals_against','penalty_5m_goal_against','shot_against']);
-  const feedEvents = [...events].reverse().filter(e => {
-    if (!e.stat) return false;
-    if (e.stat === 'shot_against') return false; // too noisy
-    return true;
-  });
+  // Same stat definitions as the tracker feed — icon + label come from here
+  const PENALTY_STAT_DEFS_LIVE = [
+    { key: 'penalty_5m_goal_for',    label: '5M Goal — FOR',     icon: '🔵' },
+    { key: 'penalty_5m_miss_for',    label: '5M Miss — FOR',     icon: '🔵' },
+    { key: 'penalty_5m_goal_against',label: '5M Goal — AGAINST', icon: '🔴' },
+    { key: 'penalty_5m_miss_against',label: '5M Miss — AGAINST', icon: '🔴' },
+    { key: 'penalty_5m_block',       label: '5M Blocked',        icon: '🧤' },
+  ];
+  const allStatDefs = [...FIELD_STATS, ...GOALIE_STATS, ...PENALTY_STAT_DEFS_LIVE];
+
+  // Events newest-first, deduped by id, shot_against filtered (too noisy)
+  const feedEvents = (() => {
+    const seen = new Set();
+    // Sort by ts descending so newest is always first, regardless of server order
+    const sorted = [...events].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    return sorted.filter(e => {
+      if (!e.stat) return false;
+      if (e.stat === 'shot_against') return false;
+      const key = e.id || (e.stat + '|' + (e.ts||0) + '|' + (e.playerId||''));
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  })();
 
   // Shot map data
   const shotMapEvts = events.filter(e =>
@@ -639,9 +680,31 @@ function LiveGameView({ gameKey, onBack }) {
       </div>
 
       {/* Body */}
-      <div style={{ flex:1, overflowY:'auto', padding:'12px 16px' }}>
+      <div ref={feedRef} style={{ flex:1, overflowY:'auto', padding:'12px 16px' }}>
         {error && !data && (
           <div style={{ textAlign:'center', padding:40, color:'var(--muted)' }}>{error}</div>
+        )}
+
+        {/* Game-over notification banner */}
+        {data && !data.is_live && (
+          <div style={{
+            margin: '0 0 14px',
+            padding: '14px 16px',
+            borderRadius: 12,
+            background: 'linear-gradient(135deg, rgba(0,48,135,0.07), rgba(0,48,135,0.03))',
+            border: '1.5px solid rgba(0,48,135,0.15)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+          }}>
+            <div style={{ fontSize: 28 }}>🏁</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--navy)', marginBottom: 2 }}>Game Over</div>
+              <div style={{ fontSize: 13, color: 'var(--muted)' }}>
+                Final score: <strong style={{ color: 'var(--navy)' }}>{data.wave_team} {data.wave_score} – {data.opp_score} {data.opponent}</strong>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Shot map (compact) */}
@@ -683,24 +746,30 @@ function LiveGameView({ gameKey, onBack }) {
             <div style={{ fontSize:13, color:'var(--muted)', textAlign:'center', padding:'20px 0' }}>No events yet</div>
           )}
           {feedEvents.slice(0, 30).map((e, i) => {
+            const def      = allStatDefs.find(s => s.key === e.stat);
             const pl       = playerMap[e.playerId];
-            const capNum   = pl?.number || e.capNumber || null;
-            const name     = pl?.name   || null;
-            const isWave   = !oppOnlyStats.has(e.stat);
+            const isOppStat= e.stat === 'goals_against' || e.stat === 'shot_against' || e.stat === 'penalty_5m_goal_against';
+            const capNum   = pl?.number || e.capNumber || (isOppStat ? e.oppNum : null);
+            const name     = pl?.name || null;
             const isGoal   = ['goal','penalty_5m_goal_for'].includes(e.stat);
             const isOppGoal= ['goals_against','penalty_5m_goal_against'].includes(e.stat);
             const bg = isGoal ? 'rgba(34,197,94,0.08)' : isOppGoal ? 'rgba(239,68,68,0.07)' : i%2===0 ? 'var(--surface)' : 'var(--bg)';
-            const emoji    = LIVE_STAT_EMOJI[e.stat] || '·';
-            const label    = LIVE_STAT_LABELS[e.stat] || e.stat;
-            const playerStr= capNum ? `#${capNum}${name ? ' '+name : ''}` : (name || '');
+            const rightLabel = isOppStat
+              ? (capNum ? `#${capNum} Opp` : 'Opp')
+              : (capNum ? `#${capNum}${name ? ' '+name : ''}` : (name || ''));
             return (
-              <div key={e.id||i} style={{ display:'grid', gridTemplateColumns:'24px 1fr auto', alignItems:'center', gap:8, padding:'7px 10px', borderRadius:8, background:bg, marginBottom:2 }}>
-                <div style={{ fontSize:16, textAlign:'center' }}>{emoji}</div>
-                <div>
-                  <div style={{ fontSize:13, fontWeight: isGoal||isOppGoal ? 700 : 400 }}>{label}</div>
-                  {playerStr && <div style={{ fontSize:11, color:'var(--muted)' }}>{isWave ? '' : 'Opp '}{playerStr}</div>}
-                </div>
-                <div style={{ fontSize:11, color:'var(--muted)', textAlign:'right' }}>{e.period||''}</div>
+              <div key={e.id||i} style={{ display:'flex', alignItems:'center', gap:10, padding:'7px 10px', borderRadius:8, background:bg, marginBottom:2 }}>
+                <span style={{ fontSize:16, minWidth:22, textAlign:'center' }}>{def?.icon || '📌'}</span>
+                <span style={{ flex:1, fontSize:13, fontWeight: isGoal||isOppGoal ? 700 : 500, color:'var(--text)' }}>
+                  {def?.label || e.stat}
+                  {e.stat === 'kickout_earned' && e.oppNum
+                    ? <span style={{ fontSize:11, color:'var(--muted)', marginLeft:6 }}>vs #{e.oppNum}</span>
+                    : null}
+                </span>
+                <span style={{ fontSize:12, color: isOppStat ? '#ef4444' : 'var(--muted)' }}>
+                  {rightLabel}
+                  {e.period ? <span style={{ marginLeft:6, opacity:.7 }}>{e.period}</span> : null}
+                </span>
               </div>
             );
           })}
@@ -2033,6 +2102,18 @@ function TrackScreen({ db, update, push, activeGame, goHomeSignal, clubName }) {
   // Return to game list when Home nav is tapped
   useEffect(() => { if (goHomeSignal > 0) setViewGameId(null); }, [goHomeSignal]);
 
+  // Live sync — fires whenever game.events changes, after db is committed.
+  // Using useEffect guarantees we read the authoritative event list, avoiding
+  // stale-closure double-sends that caused duplicate events in the feed.
+  const prevEventCount = useRef(0);
+  useEffect(() => {
+    if (!game?.serverKey || !game?.events) return;
+    const count = game.events.length;
+    if (count === prevEventCount.current) return; // no change
+    prevEventCount.current = count;
+    syncLiveEvents(game);
+  }, [game?.events?.length, game?.serverKey]);
+
   // Called by NewGameModal with the resolved setup object
   async function handleCreateGame({ waveTeamId, waveTeamName, waveRosterPlayers, opponentName, ageGroup, tournament, gameDate, _serverKey }) {
     setCreating(true);
@@ -2179,11 +2260,7 @@ function TrackScreen({ db, update, push, activeGame, goHomeSignal, clubName }) {
     setShotPicker(null);
     setGoalContext(null);
     setPenaltyShot(null);
-    // Live sync — fire and forget
-    if (game?.serverKey) {
-      const eventsWithNew = [...(game.events || []), event];
-      setTimeout(() => syncLiveEvents({ ...game, events: eventsWithNew }), 0);
-    }
+    // Live sync is handled by the useEffect on game.events below
     // Track active kickout so next shot/goal defaults to correct situation
     if (stat === "kickout")         setActiveKickout("wave"); // WAVE kicked out → man down
     else if (stat === "kickout_earned") setActiveKickout("opp"); // Opp kicked out → man up
@@ -2323,7 +2400,13 @@ function TrackScreen({ db, update, push, activeGame, goHomeSignal, clubName }) {
                   onClick={() => {
                     if (isAssist) setAssistPulse(false);
                     if (s.key === "penalty_5m") { setPenaltyShot({ step: "direction" }); }
-                    else { setPickerStat({ stat: s.key, teamId: waveTeamId }); }
+                    else {
+                      // For assist, find the most recent goal scorer so we can grey them out
+                      const scorerId = s.key === "assist"
+                        ? [...(game?.events || [])].reverse().find(e => e.stat === "goal" || e.stat === "penalty_5m_goal_for")?.playerId || null
+                        : null;
+                      setPickerStat({ stat: s.key, teamId: waveTeamId, scorerId });
+                    }
                   }}>
                   <div className="stat-tile-icon" style={{ fontSize: s.key === "penalty_5m" ? 14 : gridCols === 2 ? 28 : gridCols === 3 ? 24 : 22, fontFamily: s.key === "penalty_5m" ? "var(--font-display)" : "inherit", fontWeight: s.key === "penalty_5m" ? 900 : "normal", color: s.key === "penalty_5m" ? "var(--navy)" : "inherit", letterSpacing: s.key === "penalty_5m" ? 1 : 0 }}>{s.key === "penalty_5m" ? "5M" : s.icon}</div>
                   <div className="stat-tile-label" style={{ fontSize: gridCols === 2 ? 12 : gridCols === 3 ? 11 : 10, color: isPulsing ? "#2563eb" : "var(--navy)", fontWeight: 700 }}>
@@ -2509,6 +2592,7 @@ function TrackScreen({ db, update, push, activeGame, goHomeSignal, clubName }) {
           teamId={pickerStat.teamId}
           players={db.players}
           teams={db.teams}
+          scorerId={pickerStat.scorerId || null}
           onConfirm={pids => {
             pids.forEach(pid => recordStat("assist", pid));
             setPickerStat(null);
@@ -3713,7 +3797,7 @@ function PlayerPicker({ stat, teamId, players, teams, onSelect, onClose }) {
 }
 
 // ─── Assist Picker (1 or 2 players) ──────────────────────────────────────────
-function AssistPicker({ teamId, players, teams, onConfirm, onClose }) {
+function AssistPicker({ teamId, players, teams, scorerId, onConfirm, onClose }) {
   const [selected, setSelected] = useState([]);
   const team = teams.find(t => t.id === teamId);
   const teamPlayers = players
@@ -3723,10 +3807,34 @@ function AssistPicker({ teamId, players, teams, onConfirm, onClose }) {
   const field   = teamPlayers.filter(p => !p.isGoalie);
 
   function toggle(pid) {
+    if (pid === scorerId) return; // can't assist their own goal
     setSelected(prev =>
       prev.includes(pid)
         ? prev.filter(x => x !== pid)
         : prev.length < 2 ? [...prev, pid] : prev
+    );
+  }
+
+  function renderPlayer(p) {
+    const on       = selected.includes(p.id);
+    const isScorer = p.id === scorerId;
+    const disabled = (!on && selected.length >= 2) || isScorer;
+    return (
+      <div key={p.id} className="picker-player"
+        style={{
+          background: on ? "rgba(59,130,246,0.1)" : isScorer ? "rgba(0,0,0,0.03)" : "",
+          opacity: disabled && !isScorer ? 0.4 : 1,
+          cursor: isScorer ? "default" : "pointer",
+        }}
+        onClick={() => !disabled && toggle(p.id)}>
+        <span className="picker-number">#{p.number}</span>
+        <span className="picker-name" style={{ color: isScorer ? "var(--muted)" : "inherit" }}>
+          {p.name}
+          {isScorer && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--muted)" }}>🥅 scored</span>}
+        </span>
+        {p.isGoalie && <span className="picker-goalie-tag">GK</span>}
+        {on && <span style={{ marginLeft: "auto", color: "#3b82f6", fontWeight: 900, fontSize: 18 }}>✓</span>}
+      </div>
     );
   }
 
@@ -3746,38 +3854,13 @@ function AssistPicker({ teamId, players, teams, onConfirm, onClose }) {
           {goalies.length > 0 && (
             <>
               <div className="picker-sep">Goalies</div>
-              {goalies.map(p => {
-                const on = selected.includes(p.id);
-                const disabled = !on && selected.length >= 2;
-                return (
-                  <div key={p.id} className="picker-player"
-                    style={{ background: on ? "rgba(59,130,246,0.1)" : "", opacity: disabled ? 0.4 : 1 }}
-                    onClick={() => !disabled && toggle(p.id)}>
-                    <span className="picker-number">#{p.number}</span>
-                    <span className="picker-name">{p.name}</span>
-                    <span className="picker-goalie-tag">GK</span>
-                    {on && <span style={{ marginLeft: "auto", color: "#3b82f6", fontWeight: 900, fontSize: 18 }}>✓</span>}
-                  </div>
-                );
-              })}
+              {goalies.map(p => renderPlayer(p))}
             </>
           )}
           {field.length > 0 && (
             <>
               <div className="picker-sep">Field Players</div>
-              {field.map(p => {
-                const on = selected.includes(p.id);
-                const disabled = !on && selected.length >= 2;
-                return (
-                  <div key={p.id} className="picker-player"
-                    style={{ background: on ? "rgba(59,130,246,0.1)" : "", opacity: disabled ? 0.4 : 1 }}
-                    onClick={() => !disabled && toggle(p.id)}>
-                    <span className="picker-number">#{p.number}</span>
-                    <span className="picker-name">{p.name}</span>
-                    {on && <span style={{ marginLeft: "auto", color: "#3b82f6", fontWeight: 900, fontSize: 18 }}>✓</span>}
-                  </div>
-                );
-              })}
+              {field.map(p => renderPlayer(p))}
             </>
           )}
         </div>
