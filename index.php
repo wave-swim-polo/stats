@@ -1867,6 +1867,7 @@ function InlineSubmitSheet({ game, db, push, onClose, onResubmit }) {
             id: e.id, stat: e.stat, playerId: e.playerId,
             ts: e.ts, period: e.period || null,
             shotLocation: e.shotLocation || null,
+            netLocation: e.netLocation || null,
             situation: e.situation || null, playType: e.playType || null,
             oppNum: e.oppNum || null, shotExp: e.shotExp || null, wetDry: e.wetDry || null,
           })),
@@ -2697,7 +2698,8 @@ function TrackScreen({ db, update, push, activeGame, goHomeSignal, clubName }) {
             return "man_up";                           // WAVE goal or shot on power play
           })()}
           onConfirm={extras => {
-            recordStat(goalContext.stat, goalContext.playerId, goalContext.shotLocation, { ...extras, oppNum: goalContext.oppNum || extras.oppNum });
+            const shotLoc = goalContext.shotLocation || null;
+            recordStat(goalContext.stat, goalContext.playerId, shotLoc, { ...extras, oppNum: goalContext.oppNum || extras.oppNum });
             if (goalContext.stat === "goal" || goalContext.stat === "penalty_5m_goal_for") {
               setAssistPulse(true);
               assistPulseStart.current = Date.now();
@@ -3043,6 +3045,7 @@ function EndGameModal({ game, db, onEndOnly, onEndAndSubmit, onClose, push }) {
               id: e.id, stat: e.stat, playerId: e.playerId,
               ts: e.ts, period: e.period || null,
               shotLocation: e.shotLocation || null,
+              netLocation: e.netLocation || null,
               situation: e.situation || null, playType: e.playType || null,
               shotExp: e.shotExp || null, wetDry: e.wetDry || null,
               oppNum: e.oppNum || null,
@@ -3399,11 +3402,23 @@ function GoalContextPicker({ stat, player, oppNum, needsOpp, defaultSituation, o
   const isGoal      = stat === "goal" || stat === "goals_against";
   const isKoEarned  = stat === "kickout_earned";
 
-  const [koOppNum,  setKoOppNum]  = useState(null); // only for kickout_earned
-  const [situation, setSituation] = useState(defaultSituation || "even");
-  const [playType,  setPlayType]  = useState("");
-  const [shotExp,   setShotExp]   = useState("");    // expected | unexpected | unsure
-  const [wetDry,    setWetDry]    = useState("");    // wet | dry
+  const [koOppNum,    setKoOppNum]    = useState(null); // only for kickout_earned
+  const [situation,   setSituation]   = useState(defaultSituation || "even");
+  const [playType,    setPlayType]    = useState("");
+  const [shotExp,     setShotExp]     = useState("");    // expected | unexpected | unsure
+  const [netLocation, setNetLocation] = useState(null);  // { x, y } freeform tap on net face
+  const netSvgRef = useRef(null);
+
+  function handleNetTap(e) {
+    const svg = netSvgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const x = Math.round(((clientX - rect.left) / rect.width)  * 1000) / 10;
+    const y = Math.round(((clientY - rect.top)  / rect.height) * 1000) / 10;
+    setNetLocation(prev => (prev && Math.abs(prev.x - x) < 3 && Math.abs(prev.y - y) < 3) ? null : { x, y });
+  }
 
   const situations = [
     { key: "man_down", label: "Man-Down", icon: "⬇️" },
@@ -3418,10 +3433,6 @@ function GoalContextPicker({ stat, player, oppNum, needsOpp, defaultSituation, o
     { key: "expected",   label: "Expected",   icon: "🎯" },
     { key: "unexpected", label: "Unexpected", icon: "😮" },
     { key: "unsure",     label: "Unsure",     icon: "🤷" },
-  ];
-  const wetDryOpts = [
-    { key: "wet", label: "Wet", icon: "💧" },
-    { key: "dry", label: "Dry", icon: "🏐" },
   ];
 
   const titleIcon = stat === "goals_against" ? "🥅" : stat === "shot_against" ? "🎯" : stat === "goal" ? "⭐" : "🎯";
@@ -3507,6 +3518,75 @@ function GoalContextPicker({ stat, player, oppNum, needsOpp, defaultSituation, o
 
         <div className="picker-list" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 16 }}>
 
+          {/* Net location picker — freeform tap, same as field shot map */}
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
+              Where in the net?
+            </div>
+            <svg
+              ref={netSvgRef}
+              viewBox="0 0 300 160"
+              style={{ width: "100%", borderRadius: 10, cursor: "crosshair", touchAction: "none", userSelect: "none", border: `3px solid ${netLocation ? (isAgainst ? "#ef4444" : isGoal ? "#22c55e" : "#f59e0b") : "var(--border)"}`, transition: "border-color 0.2s", display: "block" }}
+              onClick={handleNetTap}
+              onTouchEnd={handleNetTap}
+            >
+              <defs>
+                <pattern id="netGrid" x="0" y="0" width="15" height="15" patternUnits="userSpaceOnUse">
+                  <path d="M15 0 L0 0 0 15" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="0.8"/>
+                </pattern>
+                <linearGradient id="netBg" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#1e3a5f"/>
+                  <stop offset="100%" stopColor="#0c1a2e"/>
+                </linearGradient>
+              </defs>
+              {/* Pool water peek at bottom */}
+              <rect x="0" y="0" width="300" height="160" fill="#0ea5e9" fillOpacity="0.12" rx="8"/>
+              {/* Net interior */}
+              <rect x="10" y="10" width="280" height="130" fill="url(#netBg)" fillOpacity="0.9" rx="2"/>
+              {/* Net grid */}
+              <rect x="10" y="10" width="280" height="130" fill="url(#netGrid)"/>
+              {/* Depth perspective lines from corners to back */}
+              <line x1="10"  y1="10"  x2="50"  y2="35"  stroke="rgba(255,255,255,0.12)" strokeWidth="0.8"/>
+              <line x1="290" y1="10"  x2="250" y2="35"  stroke="rgba(255,255,255,0.12)" strokeWidth="0.8"/>
+              <line x1="10"  y1="140" x2="50"  y2="115" stroke="rgba(255,255,255,0.12)" strokeWidth="0.8"/>
+              <line x1="290" y1="140" x2="250" y2="115" stroke="rgba(255,255,255,0.12)" strokeWidth="0.8"/>
+              {/* Goal posts — left, right, top */}
+              <rect x="5"   y="5"   width="8"  height="150" fill="white" rx="3"/>
+              <rect x="287" y="5"   width="8"  height="150" fill="white" rx="3"/>
+              <rect x="5"   y="5"   width="290" height="8" fill="white" rx="3"/>
+              {/* Crossbar */}
+              <rect x="13"  y="13"  width="274" height="3" fill="rgba(0,0,0,0.25)" rx="1"/>
+              {/* Back post shadow / depth */}
+              <rect x="48"  y="34"  width="4"  height="82" fill="rgba(255,255,255,0.25)" rx="2"/>
+              <rect x="248" y="34"  width="4"  height="82" fill="rgba(255,255,255,0.25)" rx="2"/>
+              <rect x="48"  y="34"  width="204" height="3" fill="rgba(255,255,255,0.25)" rx="1"/>
+              {/* Zone labels when no marker placed */}
+              {!netLocation && (
+                <g fill="rgba(255,255,255,0.3)" fontSize="11" fontFamily="system-ui,sans-serif" fontWeight="600">
+                  <text x="55"  y="50"  textAnchor="middle">Top L</text>
+                  <text x="245" y="50"  textAnchor="middle">Top R</text>
+                  <text x="150" y="95"  textAnchor="middle">Centre</text>
+                  <text x="55"  y="130" textAnchor="middle">Bot L</text>
+                  <text x="245" y="130" textAnchor="middle">Bot R</text>
+                </g>
+              )}
+              {/* Freeform ball marker */}
+              {netLocation && (
+                <g>
+                  <circle cx={netLocation.x * 3} cy={netLocation.y * 1.6} r="14"
+                    fill={isAgainst ? "#ef4444" : isGoal ? "#22c55e" : "#f59e0b"}
+                    fillOpacity="0.35"/>
+                  <circle cx={netLocation.x * 3} cy={netLocation.y * 1.6} r="7"
+                    fill={isAgainst ? "#ef4444" : isGoal ? "#22c55e" : "#f59e0b"}
+                    stroke="white" strokeWidth="2"/>
+                </g>
+              )}
+            </svg>
+            <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted)", textAlign: "center" }}>
+              {netLocation ? "Marker placed — tap to move, tap marker to clear" : "Tap the net to mark where the ball crossed the line"}
+            </div>
+          </div>
+
           {/* Situation — goals and shots */}
           <SelectRow label="Was WAVE…?" options={situations} value={situation} onChange={setSituation} />
 
@@ -3518,8 +3598,6 @@ function GoalContextPicker({ stat, player, oppNum, needsOpp, defaultSituation, o
           {/* Shot expectedness — all four stat types */}
           <SelectRow label="Was the shot…?" options={shotExps} value={shotExp} onChange={setShotExp} />
 
-          {/* Wet or Dry */}
-          <SelectRow label="Ball — Wet or Dry?" options={wetDryOpts} value={wetDry} onChange={setWetDry} />
 
           <div style={{ fontSize: 11, color: "var(--muted)", textAlign: "center" }}>All fields optional — tap again to deselect</div>
         </div>
@@ -3528,11 +3606,11 @@ function GoalContextPicker({ stat, player, oppNum, needsOpp, defaultSituation, o
           <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => onConfirm({ oppNum: oppNum || null })}>Skip</button>
           <button className="btn btn-primary" style={{ flex: 1 }}
             onClick={() => onConfirm({
-              situation: situation || null,
-              playType:  isGoal ? (playType || null) : undefined,
-              shotExp:   shotExp || null,
-              wetDry:    wetDry  || null,
-              oppNum:    oppNum  || null,
+              situation:    situation || null,
+              playType:     isGoal ? (playType || null) : undefined,
+              shotExp:      shotExp || null,
+              oppNum:       oppNum  || null,
+              netLocation:  netLocation || null,
             })}>
             ✓ Confirm
           </button>
@@ -4564,6 +4642,7 @@ function SubmitScreen({ db, push }) {
           id: e.id, stat: e.stat, playerId: e.playerId,
           ts: e.ts, period: e.period || null,
           shotLocation: e.shotLocation || null,
+          netLocation: e.netLocation || null,
           situation: e.situation || null, playType: e.playType || null,
           oppNum: e.oppNum || null,
           shotExp: e.shotExp || null, wetDry: e.wetDry || null,
@@ -5122,6 +5201,7 @@ function ShotHeatMap({ events, players, title }) {
                 {selEvent.period && <div><strong>Period:</strong> {selEvent.period}</div>}
                 {selEvent.situation && <div><strong>Situation:</strong> {{man_up:"Man-Up ⬆️",man_down:"Man-Down ⬇️",even:"Even ⚖️"}[selEvent.situation]||selEvent.situation}</div>}
                 {selEvent.shotExp && <div><strong>Shot type:</strong> {{expected:"Expected 🎯",unexpected:"Unexpected 😮",unsure:"Unsure 🤷"}[selEvent.shotExp]||selEvent.shotExp}</div>}
+                {selEvent.netLocation && <div><strong>Net:</strong> {{"top_left":"Top Left ↖️","top_right":"Top Right ↗️","bottom_left":"Bottom Left ↙️","bottom_right":"Bottom Right ↘️","bunny":"Bunny 🐇"}[selEvent.netLocation.zone]||selEvent.netLocation.zone}</div>}
                 {selEvent.wetDry && <div><strong>Ball:</strong> {{wet:"Wet 💧",dry:"Dry 🏐"}[selEvent.wetDry]||selEvent.wetDry}</div>}
                 {selEvent.playType && <div><strong>Play:</strong> {{counter:"Counter-attack ⚡",setup:"Set-up Play ♟️"}[selEvent.playType]||selEvent.playType}</div>}
               </div>
