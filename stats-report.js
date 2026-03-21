@@ -306,17 +306,43 @@ function crunchReportData(games, title, subtitle, scope) {
     }
 
     // ── 10. Shot Map (x/y coordinates) ───────────────────────────────────────
+    // ── Field shot map (where on pool the shot was taken) ──────────────────
     const shotMapEvts = allEvents.filter(e =>
         ['goal','shot','penalty_5m_goal_for','penalty_5m_miss_for','penalty_5m_block'].includes(e.stat)
         && e.shotLocation?.x != null && e.shotLocation?.y != null
     );
     if (shotMapEvts.length) {
-        sections.push({ type: 'shot_map', title: 'Shot Map',
+        sections.push({ type: 'shot_map', title: 'Shot Map (Field)',
             shots: shotMapEvts.map(e => ({
                 x: e.shotLocation.x, y: e.shotLocation.y,
                 isGoal: GOAL_STATS.has(e.stat),
                 is5m:   ['penalty_5m_goal_for','penalty_5m_miss_for','penalty_5m_block'].includes(e.stat),
             }))
+        });
+    }
+
+    // ── Net location maps (where ball crossed goal line) ─────────────────
+    // WAVE attacking net: goals + shots where WAVE had netLocation recorded
+    const waveNetEvts = allEvents.filter(e =>
+        ['goal','shot','penalty_5m_goal_for','penalty_5m_miss_for','penalty_5m_block'].includes(e.stat)
+        && isWaveEvent(e) && e.netLocation?.x != null && e.netLocation?.y != null
+    );
+    // Opponent attacking net: goals_against + shot_against with netLocation
+    const oppNetEvts = allEvents.filter(e =>
+        ['goals_against','penalty_5m_goal_against','shot_against'].includes(e.stat)
+        && e.netLocation?.x != null && e.netLocation?.y != null
+    );
+    if (waveNetEvts.length || oppNetEvts.length) {
+        sections.push({ type: 'net_map', title: 'Net Map',
+            waveShots: waveNetEvts.map(e => ({
+                x: e.netLocation.x, y: e.netLocation.y,
+                isGoal: GOAL_STATS.has(e.stat),
+            })),
+            oppShots: oppNetEvts.map(e => ({
+                x: e.netLocation.x, y: e.netLocation.y,
+                isGoal: OPP_GOAL.has(e.stat),
+            })),
+            waveLabel: allEvents[0]?._game ? (allEvents.find(e=>e._game)?.wave_team || 'WAVE') : 'WAVE',
         });
     }
 
@@ -405,6 +431,39 @@ function renderReportHTML(data) {
     const tdl     = (v,bold)   => `<td style="padding:5px 10px${bold?';font-weight:700':''}">${v}</td>`;
     const tblWrap = inner => `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--navy);color:#fff">`;
     const rowBg   = i => i%2===0 ? '#f8f9fc' : '#fff';
+
+    function netSvg(shots, accentGoal, accentSave, label) {
+        const W=300, H=160;
+        const dots = shots.map(s => {
+            const cx = (s.x/100*W).toFixed(1);
+            const cy = (s.y/100*H).toFixed(1);
+            const fill = s.isGoal ? accentGoal : accentSave;
+            return `<circle cx="${cx}" cy="${cy}" r="7" fill="${fill}" fill-opacity="0.85" stroke="#fff" stroke-width="1.5"/>`;
+        }).join('');
+        return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:340px;border-radius:10px;display:block;border:2px solid var(--bdr)">
+            <defs>
+                <pattern id="ng${label}" x="0" y="0" width="15" height="15" patternUnits="userSpaceOnUse">
+                    <path d="M15 0 L0 0 0 15" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="0.8"/>
+                </pattern>
+                <linearGradient id="nb${label}" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#1e3a5f"/>
+                    <stop offset="100%" stop-color="#0c1a2e"/>
+                </linearGradient>
+            </defs>
+            <rect x="0" y="0" width="${W}" height="${H}" fill="#0ea5e9" fill-opacity="0.1" rx="8"/>
+            <rect x="10" y="10" width="${W-20}" height="${H-20}" fill="url(#nb${label})" fill-opacity="0.9" rx="2"/>
+            <rect x="10" y="10" width="${W-20}" height="${H-20}" fill="url(#ng${label})"/>
+            <line x1="10" y1="10" x2="50" y2="35" stroke="rgba(255,255,255,0.1)" stroke-width="0.8"/>
+            <line x1="${W-10}" y1="10" x2="${W-50}" y2="35" stroke="rgba(255,255,255,0.1)" stroke-width="0.8"/>
+            <line x1="10" y1="${H-10}" x2="50" y2="${H-35}" stroke="rgba(255,255,255,0.1)" stroke-width="0.8"/>
+            <line x1="${W-10}" y1="${H-10}" x2="${W-50}" y2="${H-35}" stroke="rgba(255,255,255,0.1)" stroke-width="0.8"/>
+            <rect x="4" y="4" width="8" height="${H-8}" fill="white" rx="3"/>
+            <rect x="${W-12}" y="4" width="8" height="${H-8}" fill="white" rx="3"/>
+            <rect x="4" y="4" width="${W-8}" height="8" fill="white" rx="3"/>
+            ${dots}
+            ${shots.length===0 ? `<text x="${W/2}" y="${H/2+5}" text-anchor="middle" fill="rgba(255,255,255,0.3)" font-size="13" font-family="system-ui,sans-serif">No data</text>` : ''}
+        </svg>`;
+    }
 
     data.sections.forEach(sec => {
         let inner = sec_hdr(sec.title);
@@ -634,6 +693,27 @@ function renderReportHTML(data) {
         }
 
         // ── game_flow ─────────────────────────────────────────────────────────
+        else if (sec.type === 'net_map') {
+            const goalDot  = '#22c55e', saveDot = '#f59e0b';
+            const oppGoalDot = '#ef4444', oppSaveDot = '#f59e0b';
+            inner += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">`;
+            inner += `<div>
+                <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.7px;margin-bottom:6px">WAVE Attacking</div>
+                ${netSvg(sec.waveShots, goalDot, saveDot, 'w')}
+                <div style="font-size:11px;color:var(--muted);margin-top:4px">${sec.waveShots.length} shots · ${sec.waveShots.filter(s=>s.isGoal).length} goals</div>
+            </div>`;
+            inner += `<div>
+                <div style="font-size:11px;font-weight:700;color:#ef4444;text-transform:uppercase;letter-spacing:.7px;margin-bottom:6px">Opp Attacking</div>
+                ${netSvg(sec.oppShots, oppGoalDot, oppSaveDot, 'o')}
+                <div style="font-size:11px;color:var(--muted);margin-top:4px">${sec.oppShots.length} shots · ${sec.oppShots.filter(s=>s.isGoal).length} goals</div>
+            </div>`;
+            inner += `</div>
+            <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--muted)">
+                <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#22c55e;margin-right:4px"></span>Goal</span>
+                <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#f59e0b;margin-right:4px"></span>Shot saved/missed</span>
+                <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#ef4444;margin-right:4px"></span>Goal against</span>
+            </div>`;
+        }
         else if (sec.type === 'game_flow') {
             const ap = sec.periods.filter(p => sec.games.some(g => g.periods[p].wave || g.periods[p].opp));
             sec.games.forEach(g => {
