@@ -346,7 +346,43 @@ function crunchReportData(games, title, subtitle, scope) {
         });
     }
 
-    // ── 11. Game Flow ────────────────────────────────────────────────────────
+    // ── 11. Quarter-by-Quarter Shot + Net Maps ──────────────────────────────
+    const QUARTER_PERIODS = ['1Q','2Q','3Q','4Q','OT','SO'];
+    const quarterMapData = QUARTER_PERIODS.map(p => {
+        const pEvts = allEvents.filter(e => e.period === p);
+
+        // Field shots this period (WAVE only)
+        const fieldShots = pEvts.filter(e =>
+            ['goal','shot','penalty_5m_goal_for','penalty_5m_miss_for','penalty_5m_block'].includes(e.stat)
+            && isWaveEvent(e)
+            && e.shotLocation?.x != null && e.shotLocation?.y != null
+        ).map(e => ({ x: e.shotLocation.x, y: e.shotLocation.y, isGoal: GOAL_STATS.has(e.stat), is5m: ['penalty_5m_goal_for','penalty_5m_miss_for','penalty_5m_block'].includes(e.stat) }));
+
+        // WAVE attacking net this period
+        const waveNet = pEvts.filter(e =>
+            ['goal','shot','penalty_5m_goal_for','penalty_5m_miss_for','penalty_5m_block'].includes(e.stat)
+            && isWaveEvent(e) && e.netLocation?.x != null && e.netLocation?.y != null
+        ).map(e => ({ x: e.netLocation.x, y: e.netLocation.y, isGoal: GOAL_STATS.has(e.stat) }));
+
+        // Opponent attacking net this period
+        const oppNet = pEvts.filter(e =>
+            ['goals_against','penalty_5m_goal_against','shot_against'].includes(e.stat)
+            && e.netLocation?.x != null && e.netLocation?.y != null
+        ).map(e => ({ x: e.netLocation.x, y: e.netLocation.y, isGoal: OPP_GOAL.has(e.stat) }));
+
+        // Period stats summary
+        const waveGoals = pEvts.filter(e => GOAL_STATS.has(e.stat) && isWaveEvent(e)).length;
+        const waveShots = pEvts.filter(e => ['goal','shot'].includes(e.stat) && isWaveEvent(e)).length;
+        const oppGoals  = pEvts.filter(e => OPP_GOAL.has(e.stat)).length;
+
+        return { period: p, fieldShots, waveNet, oppNet, waveGoals, waveShots, oppGoals };
+    }).filter(p => p.fieldShots.length > 0 || p.waveNet.length > 0 || p.oppNet.length > 0);
+
+    if (quarterMapData.length > 0) {
+        sections.push({ type: 'quarter_maps', title: 'Quarter-by-Quarter Maps', quarters: quarterMapData });
+    }
+
+    // ── 12. Game Flow ────────────────────────────────────────────────────────
     const flowPeriods = ['1Q','2Q','3Q','4Q','OT'];
     const gameFlow = gameResults.map(g => {
         const pMap = {};
@@ -462,6 +498,29 @@ function renderReportHTML(data) {
             <rect x="4" y="4" width="${W-8}" height="8" fill="white" rx="3"/>
             ${dots}
             ${shots.length===0 ? `<text x="${W/2}" y="${H/2+5}" text-anchor="middle" fill="rgba(255,255,255,0.3)" font-size="13" font-family="system-ui,sans-serif">No data</text>` : ''}
+        </svg>`;
+    }
+
+    // Field shot map SVG helper — matches the existing shot_map renderer style
+    function fieldSvg(shots, label) {
+        const W=200, H=120;
+        const dots = shots.map(s => {
+            const cx=(s.x/100*W).toFixed(1), cy=(s.y/100*H).toFixed(1);
+            const fill = s.isGoal ? '#22c55e' : '#f59e0b';
+            const r    = s.is5m  ? 5 : 4;
+            return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" fill-opacity="0.85" stroke="#fff" stroke-width="0.8"/>`;
+        }).join('');
+        return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;border-radius:8px;display:block;background:#dbeafe;border:1px solid #93c5fd">
+            <rect x="1" y="1" width="${W-2}" height="${H-2}" fill="none" stroke="#93c5fd" stroke-width="0.5"/>
+            <line x1="${(W*0.82).toFixed(1)}" y1="1" x2="${(W*0.82).toFixed(1)}" y2="${H-1}" stroke="#93c5fd" stroke-width="0.8" stroke-dasharray="3,2"/>
+            <line x1="${(W*0.65).toFixed(1)}" y1="1" x2="${(W*0.65).toFixed(1)}" y2="${H-1}" stroke="#bfdbfe" stroke-width="0.5" stroke-dasharray="3,2"/>
+            <line x1="${(W*0.18).toFixed(1)}" y1="1" x2="${(W*0.18).toFixed(1)}" y2="${H-1}" stroke="#bfdbfe" stroke-width="0.5" stroke-dasharray="3,2"/>
+            <line x1="${(W*0.35).toFixed(1)}" y1="1" x2="${(W*0.35).toFixed(1)}" y2="${H-1}" stroke="#93c5fd" stroke-width="0.8" stroke-dasharray="3,2"/>
+            <line x1="${(W*0.5).toFixed(1)}"  y1="1" x2="${(W*0.5).toFixed(1)}"  y2="${H-1}" stroke="white" stroke-width="1" stroke-dasharray="4,3" opacity="0.6"/>
+            <rect x="${W-3}" y="${(H*0.33).toFixed(1)}" width="3" height="${(H*0.34).toFixed(1)}" fill="#1d4ed8" rx="1"/>
+            <rect x="0"     y="${(H*0.33).toFixed(1)}" width="3" height="${(H*0.34).toFixed(1)}" fill="#1d4ed8" rx="1"/>
+            ${dots}
+            ${shots.length===0 ? `<text x="${W/2}" y="${H/2+4}" text-anchor="middle" fill="#93c5fd" font-size="10" font-family="system-ui,sans-serif">No location data</text>` : ''}
         </svg>`;
     }
 
@@ -709,6 +768,53 @@ function renderReportHTML(data) {
             </div>`;
             inner += `</div>
             <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--muted)">
+                <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#22c55e;margin-right:4px"></span>Goal</span>
+                <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#f59e0b;margin-right:4px"></span>Shot saved/missed</span>
+                <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#ef4444;margin-right:4px"></span>Goal against</span>
+            </div>`;
+        }
+        else if (sec.type === 'quarter_maps') {
+            const PERIOD_LABEL = {'1Q':'1st Quarter','2Q':'2nd Quarter','3Q':'3rd Quarter','4Q':'4th Quarter','OT':'Overtime','SO':'Shoot-Out'};
+            sec.quarters.forEach((q, qi) => {
+                const hasField   = q.fieldShots.length > 0;
+                const hasWaveNet = q.waveNet.length > 0;
+                const hasOppNet  = q.oppNet.length > 0;
+                const hasNet     = hasWaveNet || hasOppNet;
+                // Period header
+                inner += `<div style="margin-bottom:${qi < sec.quarters.length-1 ? '20px' : '0'}">`;
+                inner += `<div style="font-size:13px;font-weight:700;color:var(--navy);padding:6px 10px;background:rgba(0,48,135,0.06);border-radius:8px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+                    <span>${PERIOD_LABEL[q.period] || q.period}</span>
+                    <span style="font-size:11px;font-weight:400;color:var(--muted)">
+                        WAVE: ${q.waveGoals}G / ${q.waveShots} shots &nbsp;·&nbsp; Opp: ${q.oppGoals}G
+                    </span>
+                </div>`;
+                // Two columns: field map | net maps
+                inner += `<div style="display:grid;grid-template-columns:${hasNet ? '1fr 1fr' : '1fr'};gap:12px;align-items:start">`;
+                // Field map
+                inner += `<div>
+                    <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-bottom:5px">📍 Field — Shot Origins</div>
+                    ${fieldSvg(q.fieldShots, 'f'+qi)}
+                    <div style="font-size:10px;color:var(--muted);margin-top:3px">${q.fieldShots.length} shots · ${q.fieldShots.filter(s=>s.isGoal).length} goals plotted</div>
+                </div>`;
+                // Net maps (stacked: WAVE attacking on top, Opp attacking below)
+                if (hasNet) {
+                    inner += `<div style="display:flex;flex-direction:column;gap:10px">`;
+                    inner += `<div>
+                        <div style="font-size:10px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.7px;margin-bottom:4px">🥅 WAVE Attacking Net</div>
+                        ${netSvg(q.waveNet, '#22c55e', '#f59e0b', 'wn'+qi)}
+                        <div style="font-size:10px;color:var(--muted);margin-top:2px">${q.waveNet.length} shots · ${q.waveNet.filter(s=>s.isGoal).length} goals</div>
+                    </div>`;
+                    inner += `<div>
+                        <div style="font-size:10px;font-weight:700;color:#ef4444;text-transform:uppercase;letter-spacing:.7px;margin-bottom:4px">🥅 Opp Attacking Net</div>
+                        ${netSvg(q.oppNet, '#ef4444', '#f59e0b', 'on'+qi)}
+                        <div style="font-size:10px;color:var(--muted);margin-top:2px">${q.oppNet.length} shots · ${q.oppNet.filter(s=>s.isGoal).length} goals</div>
+                    </div>`;
+                    inner += `</div>`;
+                }
+                inner += `</div></div>`;
+            });
+            // Legend
+            inner += `<div style="margin-top:10px;display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--muted)">
                 <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#22c55e;margin-right:4px"></span>Goal</span>
                 <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#f59e0b;margin-right:4px"></span>Shot saved/missed</span>
                 <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#ef4444;margin-right:4px"></span>Goal against</span>
