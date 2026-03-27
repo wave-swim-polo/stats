@@ -983,7 +983,7 @@ function AskScreen({ clubName }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ─── New Game Modal ───────────────────────────────────────────────────────────
 // Two modes: "new" (create) and "join" (attach to admin-created game)
-function NewGameModal({ db, onStart, onClose }) {
+function NewGameModal({ db, onStart, onClose, clubName = 'WAVE' }) {
   const unsubmitted = db.games.filter(g => !g.serverKey && g.events && g.events.length > 0);
   return (
     <div className="player-picker" onClick={onClose}>
@@ -1009,7 +1009,7 @@ function NewGameModal({ db, onStart, onClose }) {
             </div>
           </div>
         )}
-        <NewGamePanel db={db} onStart={onStart} onClose={onClose} />
+        <NewGamePanel db={db} onStart={onStart} onClose={onClose} clubName={clubName} />
       </div>
     </div>
   );
@@ -1143,7 +1143,7 @@ function JoinGamePanel({ db, onStart, onClose }) {
 
 // ─── New Game Panel ───────────────────────────────────────────────────────────
 // Original multi-step create flow
-function NewGamePanel({ db, onStart, onClose }) {
+function NewGamePanel({ db, onStart, onClose, clubName }) {
   const [step, setStep] = useState(1);
 
   // Step 1: WAVE team
@@ -1154,6 +1154,7 @@ function NewGamePanel({ db, onStart, onClose }) {
   // Step 2: Opponent
   const [opponentName, setOpponentName] = useState("");
   const [oppCustom,    setOppCustom]    = useState(false); // typing manually
+  const [oppRoster,    setOppRoster]    = useState(null);  // roster if opponent is another WAVE team
 
   // Step 3: Details
   const [ageGroup,    setAgeGroup]    = useState(db.ageGroup || "");
@@ -1206,10 +1207,14 @@ function NewGamePanel({ db, onStart, onClose }) {
   }
 
   // Distinct opponent names: server team_names list + roster names, deduped
+  // Exclude any name that contains the club name — you can't play yourself
   const oppChoices = [
     ...teamNameList.map(t => t.name),
     ...(rosters ? rosters.map(r => r.name) : []),
-  ].filter((n, i, arr) => arr.indexOf(n) === i).sort();
+  ].filter((n, i, arr) =>
+    arr.indexOf(n) === i &&
+    !n.toLowerCase().includes(clubName.toLowerCase())
+  ).sort();
 
   // Age groups filtered roster list for WAVE team picker
   const filteredRosters = rosters
@@ -1229,12 +1234,13 @@ function NewGamePanel({ db, onStart, onClose }) {
       : waveTeamName.trim() || "WAVE";
     const resolvedAgeGroup = ageGroup || importedRoster?.age_group || "";
     onStart({
-      waveTeamId:       null,
-      waveTeamName:     resolvedName,
+      waveTeamId:        null,
+      waveTeamName:      resolvedName,
       waveRosterPlayers: importedRoster?.players || [],
-      opponentName:     opponentName.trim(),
-      ageGroup:         resolvedAgeGroup,
-      tournament:       tournament.trim(),
+      opponentName:      opponentName.trim(),
+      oppRosterPlayers:  oppRoster?.players || [],
+      ageGroup:          resolvedAgeGroup,
+      tournament:        tournament.trim(),
       gameDate,
     });
   }
@@ -1370,6 +1376,48 @@ function NewGamePanel({ db, onStart, onClose }) {
               )}
             </div>
           )}
+
+          {/* Opponent roster — shown when opponent name matches a known WAVE roster */}
+          {step === 2 && opponentName.trim() && rosters && (() => {
+            const matchingRosters = rosters.filter(r =>
+              r.name.toLowerCase().includes(opponentName.toLowerCase()) ||
+              opponentName.toLowerCase().includes(r.name.toLowerCase())
+            );
+            if (matchingRosters.length === 0) return null;
+            return (
+              <div style={{ marginTop: 4 }}>
+                <div className="form-label" style={{ marginBottom: 8, color: "var(--muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  Is this a WAVE team? Link their roster (optional)
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {matchingRosters.map(r => {
+                    const isSel = oppRoster?.roster_key === r.roster_key;
+                    return (
+                      <div key={r.roster_key} onClick={() => setOppRoster(isSel ? null : r)} style={{
+                        display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
+                        borderRadius: 10, cursor: "pointer",
+                        border: `2px solid ${isSel ? "var(--navy)" : "var(--border)"}`,
+                        background: isSel ? "var(--accent-dim)" : "var(--surface)",
+                        transition: "all 0.15s",
+                      }}>
+                        <span style={{ fontSize: 15 }}>🌊</span>
+                        <span style={{ flex: 1, fontWeight: 700, fontSize: 13, color: isSel ? "var(--navy)" : "var(--text)" }}>
+                          {r.name}
+                          {r.age_group && <span style={{ fontWeight: 400, color: "var(--muted)", marginLeft: 6 }}>{r.age_group}</span>}
+                        </span>
+                        {isSel && <span style={{ fontSize: 13, color: "var(--navy)" }}>✓ linked</span>}
+                      </div>
+                    );
+                  })}
+                  {oppRoster && (
+                    <div style={{ fontSize: 11, color: "#16a34a", marginTop: 2 }}>
+                      ✓ {oppRoster.players?.length || 0} opponent players will be loaded — their stats will appear in the box score
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* ── Step 3: Details ── */}
           {step === 3 && (
@@ -1511,8 +1559,12 @@ function GameListScreen({ db, update, creating, showNewGame, setShowNewGame, han
       if (d.activeGameId === gameId) d.activeGameId = null;
     });
     const g = db.games.find(x => x.id === gameId);
-    if (g && g.serverKey && localStorage.getItem("wp_active_server_key") === g.serverKey)
-      localStorage.removeItem("wp_active_server_key");
+    if (g && g.serverKey) {
+      // Mark game as not live on the server so the Watch feed clears it
+      if (g.serverKey) syncLiveEvents({ ...g, serverKey: g.serverKey }, true);
+      if (localStorage.getItem("wp_active_server_key") === g.serverKey)
+        localStorage.removeItem("wp_active_server_key");
+    }
   }
 
   function clearList() {
@@ -1818,7 +1870,7 @@ function GameListScreen({ db, update, creating, showNewGame, setShowNewGame, han
       {submitGame  && <InlineSubmitSheet  game={submitGame}  db={db} push={push} onClose={() => setSubmitGame(null)} onResubmit={key => setOfficialStatus(prev => ({ ...prev, [key]: "pending" }))} />}
       {reportGame  && <InlineReportSheet  game={reportGame}  db={db} onClose={() => setReportGame(null)} />}
       {officialKey && <InlineOfficialSheet serverKey={officialKey} db={db} onClose={() => setOfficialKey(null)} />}
-      {showNewGame && <NewGameModal db={db} onStart={handleCreateGame} onClose={() => setShowNewGame(false)} />}
+      {showNewGame && <NewGameModal db={db} onStart={handleCreateGame} onClose={() => setShowNewGame(false)} clubName={clubName} />}
     </div>
   );
 }
@@ -2116,7 +2168,7 @@ function TrackScreen({ db, update, push, activeGame, goHomeSignal, clubName }) {
   }, [game?.events?.length, game?.serverKey]);
 
   // Called by NewGameModal with the resolved setup object
-  async function handleCreateGame({ waveTeamId, waveTeamName, waveRosterPlayers, opponentName, ageGroup, tournament, gameDate, _serverKey }) {
+  async function handleCreateGame({ waveTeamId, waveTeamName, waveRosterPlayers, opponentName, oppRosterPlayers = [], ageGroup, tournament, gameDate, _serverKey }) {
     setCreating(true);
     const gameId = uid();
     let homeId   = waveTeamId;
@@ -2165,6 +2217,12 @@ function TrackScreen({ db, update, push, activeGame, goHomeSignal, clubName }) {
       }
       const awayId = uid();
       d.teams.push({ id: awayId, name: opponentName, color: "#94a3b8", isOpponent: true });
+      // If opponent is a WAVE team with a roster, load their players too
+      if (oppRosterPlayers.length) {
+        for (const p of oppRosterPlayers) {
+          d.players.push({ id: p.id || uid(), teamId: awayId, name: p.name, number: p.number, isGoalie: !!p.isGoalie });
+        }
+      }
       if (ageGroup) d.ageGroup = ageGroup;
       d.games.unshift({
         id: gameId,
@@ -2608,6 +2666,13 @@ function TrackScreen({ db, update, push, activeGame, goHomeSignal, clubName }) {
           teamId={pickerStat.teamId}
           players={db.players}
           teams={db.teams}
+          excludedIds={(() => {
+            const counts = {};
+            (game?.events || []).forEach(e => {
+              if (e.stat === "kickout" && e.playerId) counts[e.playerId] = (counts[e.playerId] || 0) + 1;
+            });
+            return Object.entries(counts).filter(([,n]) => n >= 3).map(([id]) => id);
+          })()}
           onSelect={pid => {
             const s = pickerStat.stat;
             if (SHOT_STATS.has(s)) {
@@ -2751,7 +2816,7 @@ function TrackScreen({ db, update, push, activeGame, goHomeSignal, clubName }) {
         </div>
       )}
 
-      {showNewGame && <NewGameModal db={db} onStart={handleCreateGame} onClose={() => setShowNewGame(false)} />}
+      {showNewGame && <NewGameModal db={db} onStart={handleCreateGame} onClose={() => setShowNewGame(false)} clubName={clubName} />}
       {showRosterEditor && game && (
         <RosterEditorSheet
           teamId={waveTeamId}
@@ -2851,18 +2916,22 @@ function PenaltyPicker({ penaltyShot, setPenaltyShot, db, waveTeamId, recordStat
               )}
             </div>
           ) : (
-            // Opp number entry
-            <div style={{ padding: "20px 16px 24px" }}>
-              <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>Enter opponent jersey number (optional)</div>
-              <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 20 }}>
-                <input
-                  type="number" inputMode="numeric" min="1" max="99"
-                  value={oppNum} onChange={e => setOppNum(e.target.value)}
-                  placeholder="e.g. 7"
-                  style={{ width: 100, padding: "10px 14px", borderRadius: 10, border: "2px solid var(--border)", fontSize: 22, fontFamily: "var(--font-display)", fontWeight: 700, textAlign: "center", color: "var(--navy)" }}
-                />
-                <div style={{ fontSize: 13, color: "var(--muted)" }}>or leave blank</div>
+            // Opp number entry — same 1–16 grid as OppNumberPicker for consistency
+            <div style={{ padding: "16px" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>Opponent # (optional)</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 7, marginBottom: 12 }}>
+                {Array.from({ length: 16 }, (_, i) => i + 1).map(n => (
+                  <button key={n} onClick={() => setOppNum(oppNum === n ? "" : n)} style={{
+                    padding: "12px 4px", borderRadius: 10, cursor: "pointer",
+                    fontFamily: "var(--font-display)", fontSize: 18, fontWeight: 700,
+                    background: oppNum === n ? "#ef4444" : "var(--surface2)",
+                    color: oppNum === n ? "#fff" : "var(--text)",
+                    border: `2px solid ${oppNum === n ? "#ef4444" : "var(--border)"}`,
+                    transition: "all 0.12s",
+                  }}>{n}</button>
+                ))}
               </div>
+              <div style={{ fontSize: 11, color: "var(--muted)", textAlign: "center", marginBottom: 10 }}>Tap to select, tap again to clear — or skip</div>
               <button onClick={() => setPenaltyShot({ ...penaltyShot, step: "outcome", oppNum: oppNum || null })}
                 style={{ width: "100%", padding: "14px", borderRadius: 12, border: "2.5px solid #ef4444", background: "rgba(239,68,68,0.08)", cursor: "pointer", fontFamily: "var(--font-display)", fontSize: 16, fontWeight: 700, color: "#991b1b" }}>
                 Next → Choose Outcome
@@ -3454,7 +3523,7 @@ function GoalContextPicker({ stat, player, oppNum, needsOpp, defaultSituation, o
           <div className="picker-list" style={{ padding: "16px" }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>Opponent kicked out — #</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
-              {Array.from({ length: 15 }, (_, i) => i + 1).map(n => (
+              {Array.from({ length: 16 }, (_, i) => i + 1).map(n => (
                 <button key={n} onClick={() => setKoOppNum(koOppNum === n ? null : n)} style={{
                   padding: "10px 4px", borderRadius: 10, cursor: "pointer",
                   fontFamily: "var(--font-display)", fontSize: 18,
@@ -3777,7 +3846,7 @@ function OppNumberPicker({ stat, onSelect, onClose }) {
           <div style={{ fontSize: 26 }}>{isGoal ? "🥅" : "🎯"}</div>
           <div className="picker-title">
             <div className="picker-stat-name">{isGoal ? "Goal Against" : "Shot Against"}</div>
-            <div className="picker-sub">Which opponent player? (1–15)</div>
+            <div className="picker-sub">Which opponent player? (1–16)</div>
           </div>
           <button className="btn btn-icon" onClick={onClose}>✕</button>
         </div>
@@ -3786,7 +3855,7 @@ function OppNumberPicker({ stat, onSelect, onClose }) {
             Opponent #
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
-            {Array.from({ length: 15 }, (_, i) => i + 1).map(n => (
+            {Array.from({ length: 16 }, (_, i) => i + 1).map(n => (
               <button key={n} onClick={() => setSelected(selected === n ? null : n)} style={{
                 padding: "14px 4px", borderRadius: 10, cursor: "pointer",
                 fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 700,
@@ -3813,7 +3882,7 @@ function OppNumberPicker({ stat, onSelect, onClose }) {
 }
 
 // ─── Player Picker ────────────────────────────────────────────────────────────
-function PlayerPicker({ stat, teamId, players, teams, onSelect, onClose }) {
+function PlayerPicker({ stat, teamId, players, teams, onSelect, onClose, excludedIds = [] }) {
   const statDef = [...FIELD_STATS, ...GOALIE_STATS].find(s => s.key === stat) || {};
   const team = teams.find(t => t.id === teamId);
   const isGoalieStat = GOALIE_STATS.map(s => s.key).includes(stat) && !FIELD_STATS.map(s => s.key).includes(stat);
@@ -3838,27 +3907,44 @@ function PlayerPicker({ stat, teamId, players, teams, onSelect, onClose }) {
         </div>
 
         <div className="picker-list">
+
           {goalies.length > 0 && (
             <>
               <div className="picker-sep">Goalies</div>
-              {goalies.map(p => (
-                <div key={p.id} className="picker-player" onClick={() => onSelect(p.id)}>
-                  <span className="picker-number">#{p.number}</span>
-                  <span className="picker-name">{p.name}</span>
-                  <span className="picker-goalie-tag">GK</span>
-                </div>
-              ))}
+              {goalies.map(p => {
+                const isRedCarded = excludedIds.includes(p.id);
+                return (
+                  <div key={p.id} className="picker-player"
+                    style={{ opacity: isRedCarded ? 0.5 : 1, cursor: isRedCarded ? "default" : "pointer",
+                      background: isRedCarded ? "rgba(239,68,68,0.04)" : "" }}
+                    onClick={() => !isRedCarded && onSelect(p.id)}>
+                    <span className="picker-number">#{p.number}</span>
+                    <span className="picker-name">{p.name}
+                      {isRedCarded && <span style={{ marginLeft: 6, fontSize: 10, color: "#ef4444" }}>🟥 3 KOs</span>}
+                    </span>
+                    <span className="picker-goalie-tag">GK</span>
+                  </div>
+                );
+              })}
             </>
           )}
           {field.length > 0 && (
             <>
               <div className="picker-sep">Field Players</div>
-              {field.map(p => (
-                <div key={p.id} className="picker-player" onClick={() => onSelect(p.id)}>
-                  <span className="picker-number">#{p.number}</span>
-                  <span className="picker-name">{p.name}</span>
-                </div>
-              ))}
+              {field.map(p => {
+                const isRedCarded = excludedIds.includes(p.id);
+                return (
+                  <div key={p.id} className="picker-player"
+                    style={{ opacity: isRedCarded ? 0.5 : 1, cursor: isRedCarded ? "default" : "pointer",
+                      background: isRedCarded ? "rgba(239,68,68,0.04)" : "" }}
+                    onClick={() => !isRedCarded && onSelect(p.id)}>
+                    <span className="picker-number">#{p.number}</span>
+                    <span className="picker-name">{p.name}
+                      {isRedCarded && <span style={{ marginLeft: 6, fontSize: 10, color: "#ef4444" }}>🟥 3 KOs</span>}
+                    </span>
+                  </div>
+                );
+              })}
             </>
           )}
           {teamPlayers.length === 0 && (
@@ -4033,6 +4119,7 @@ function MiniBoxScore({ game, players, teams, ageGroup, isCoach }) {
               {teamPlayers.length === 0 && (
                 <tr><td colSpan={cols.length + 1} style={{ textAlign: "center", color: "var(--muted)", padding: "16px 8px", fontSize: 13 }}>No player stats recorded</td></tr>
               )}
+
             </tbody>
           </table>
         ) : (
