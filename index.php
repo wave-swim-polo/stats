@@ -1009,7 +1009,7 @@ function NewGameModal({ db, onStart, onClose, clubName = 'WAVE' }) {
             </div>
           </div>
         )}
-        <NewGamePanel db={db} onStart={onStart} onClose={onClose} />
+        <NewGamePanel db={db} onStart={onStart} onClose={onClose} clubName={clubName} />
       </div>
     </div>
   );
@@ -1143,7 +1143,7 @@ function JoinGamePanel({ db, onStart, onClose }) {
 
 // ─── New Game Panel ───────────────────────────────────────────────────────────
 // Original multi-step create flow
-function NewGamePanel({ db, onStart, onClose }) {
+function NewGamePanel({ db, onStart, onClose, clubName }) {
   const [step, setStep] = useState(1);
 
   // Step 1: WAVE team
