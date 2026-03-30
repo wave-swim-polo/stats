@@ -1009,7 +1009,7 @@ function NewGameModal({ db, onStart, onClose, clubName = 'WAVE' }) {
             </div>
           </div>
         )}
-        <NewGamePanel db={db} onStart={onStart} onClose={onClose} clubName={clubName} />
+        <NewGamePanel db={db} onStart={onStart} onClose={onClose} />
       </div>
     </div>
   );
@@ -1143,7 +1143,7 @@ function JoinGamePanel({ db, onStart, onClose }) {
 
 // ─── New Game Panel ───────────────────────────────────────────────────────────
 // Original multi-step create flow
-function NewGamePanel({ db, onStart, onClose, clubName }) {
+function NewGamePanel({ db, onStart, onClose }) {
   const [step, setStep] = useState(1);
 
   // Step 1: WAVE team
@@ -1559,11 +1559,20 @@ function GameListScreen({ db, update, creating, showNewGame, setShowNewGame, han
       if (d.activeGameId === gameId) d.activeGameId = null;
     });
     const g = db.games.find(x => x.id === gameId);
-    if (g && g.serverKey) {
-      // Mark game as not live on the server so the Watch feed clears it
-      if (g.serverKey) syncLiveEvents({ ...g, serverKey: g.serverKey }, true);
-      if (localStorage.getItem("wp_active_server_key") === g.serverKey)
-        localStorage.removeItem("wp_active_server_key");
+    if (g?.serverKey) {
+      // Tell the server this game is no longer live so the Watch feed clears it
+      fetch(SERVER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync_live_events', data: {
+          game_key: g.serverKey, is_live: false,
+          wave_team: '', opponent: '', tournament: '', game_date: '',
+          wave_score: g.homeScore ?? 0, opp_score: g.awayScore ?? 0,
+          period: '', events: [], players: [],
+        }}),
+      }).catch(() => {}); // fire-and-forget, ignore errors
+      if (localStorage.getItem('wp_active_server_key') === g.serverKey)
+        localStorage.removeItem('wp_active_server_key');
     }
   }
 
