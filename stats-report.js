@@ -167,8 +167,12 @@ function crunchReportData(games, title, subtitle, scope) {
     if (hasData) sections.push({ type: 'box_score', title: 'Team Box Score', boxScore, periods });
 
     // ── 3. Player Stats & Leaderboards ──────────────────────────────────────
-    const allPlayers = Object.entries(playerStats).map(([pid,p]) => ({ pid, ...p }))
-        .filter(p => Object.values(p.stats).some(v => v > 0) || p.goalsAgainst > 0 || p.shotsAgainst > 0);
+    const allPlayers = Object.entries(playerStats).map(([pid,p]) => {
+        // EFF = (G + A + ST + BL + KOE) - (TO + KO)
+        const pos = (p.stats.goal||0) + (p.stats.assist||0) + (p.stats.steal||0) + (p.stats.block||0) + (p.stats.kickout_earned||0);
+        const neg = (p.stats.turnover||0) + (p.stats.kickout||0);
+        return { pid, ...p, efficiency: pos - neg };
+    }).filter(p => Object.values(p.stats).some(v => v > 0) || p.goalsAgainst > 0 || p.shotsAgainst > 0);
 
     const fieldPlayers  = allPlayers.filter(p => !p.isGoalie);
     const goaliePlayers = allPlayers.filter(p => p.isGoalie);
@@ -180,6 +184,10 @@ function crunchReportData(games, title, subtitle, scope) {
         const sorted = allPlayers.filter(p => p.stats[stat] > 0).sort((a,b) => b.stats[stat]-a.stats[stat]).slice(0,5);
         if (sorted.length) leaders[stat] = sorted;
     });
+    // Efficiency leaderboard — field players only, must have at least one event
+    const effSorted = allPlayers.filter(p => !p.isGoalie && p.efficiency !== 0)
+        .sort((a,b) => b.efficiency - a.efficiency).slice(0,5);
+    if (effSorted.length) leaders['efficiency'] = effSorted;
     sections.push({ type: 'leaderboards', title: 'Leaderboards', leaders });
 
     // ── 4. Play-by-Play (O(n) with precomputed period buckets) ───────────────
@@ -454,7 +462,7 @@ function renderReportHTML(data) {
     if (!data || !data.sections) return '<p style="color:var(--muted)">No data.</p>';
 
     const ZONE_LABELS = {1:'Top-L',2:'Left',3:'Ctr-L',4:'Center',5:'Ctr-R',6:'Right',7:'Top-R'};
-    const STAT_LABELS = {goal:'Goals',assist:'Assists',shot:'Shots',steal:'Steals',block:'Blocks',kickout_earned:'KO Earned',save:'Saves'};
+    const STAT_LABELS = {goal:'Goals',assist:'Assists',shot:'Shots',steal:'Steals',block:'Blocks',kickout_earned:'KO Earned',save:'Saves',efficiency:'Efficiency (EFF)'};
 
     let html = '';
     if (data.subtitle)  html += `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">${esc(data.subtitle)}</div>`;
@@ -566,7 +574,8 @@ function renderReportHTML(data) {
                 const nonGoalCols = sec.statKeys.filter(k => k!=='goal' && allP.some(p=>p.stats[k]>0));
                 const hasGoals    = allP.some(p => p.stats.goal>0 || p.shotsAttempted>0);
                 const HDR = {assist:'A',shot:'SH',steal:'ST',block:'BL',turnover:'TO',kickout:'KO',kickout_earned:'KOE',save:'SV'};
-                inner += tblWrap() + th('#',true) + th('Name',true) + (hasGoals?th('G/Att'):'') + nonGoalCols.map(k=>th(HDR[k]||k)).join('') + `</tr></thead><tbody>`;
+                const hasEff = allP.some(p => !p.isGoalie);
+                inner += tblWrap() + th('#',true) + th('Name',true) + (hasGoals?th('G/Att'):'') + nonGoalCols.map(k=>th(HDR[k]||k)).join('') + (hasEff?th('EFF'):'') + `</tr></thead><tbody>`;
                 allP.forEach((p,i) => {
                     const goals = p.stats.goal||0;
                     const att   = p.shotsAttempted||goals;
@@ -580,6 +589,15 @@ function renderReportHTML(data) {
                         const v = p.stats[k]||0;
                         inner += `<td style="padding:4px 8px;text-align:center;font-family:var(--fm)${v>0?';font-weight:700;color:var(--navy)':';color:#ccc'}">${v||'—'}</td>`;
                     });
+                    if (hasEff) {
+                        if (p.isGoalie) {
+                            inner += `<td style="padding:4px 8px;text-align:center;color:#ccc">—</td>`;
+                        } else {
+                            const eff = p.efficiency || 0;
+                            const effColor = eff > 0 ? '#16a34a' : eff < 0 ? '#ef4444' : '#64748b';
+                            inner += `<td style="padding:4px 8px;text-align:center;font-family:var(--fm);font-weight:700;color:${effColor}">${eff > 0 ? '+'+eff : eff}</td>`;
+                        }
+                    }
                     inner += `</tr>`;
                 });
                 inner += `</tbody></table></div>`;
@@ -596,10 +614,16 @@ function renderReportHTML(data) {
                     const medals = ['🥇','🥈','🥉'];
                     const att = stat==='goal' ? (p.shotsAttempted||p.stats[stat]) : null;
                     const pct = att>0 ? Math.round(p.stats[stat]/att*100) : null;
-                    const val = stat==='goal' && att!=null ? `${p.stats[stat]}/${att}${pct!==null?' ('+pct+'%)':''}` : p.stats[stat];
+                    const rawVal = stat==='efficiency' ? p.efficiency : p.stats[stat];
+                    const val = stat==='goal' && att!=null
+                        ? `${p.stats[stat]}/${att}${pct!==null?' ('+pct+'%)'  :''}`
+                        : stat==='efficiency'
+                            ? (rawVal>0?'+'+rawVal:String(rawVal))
+                            : rawVal;
+                    const valColor = stat==='efficiency' ? (p.efficiency>0?'#16a34a':p.efficiency<0?'#ef4444':'#64748b') : 'var(--navy)';
                     inner += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;font-size:12px">
                         <span>${medals[i]||'  '} ${esc(p.name)}</span>
-                        <span style="font-family:var(--fm);font-weight:700;color:var(--navy)">${val}</span>
+                        <span style="font-family:var(--fm);font-weight:700;color:${valColor}">${val}</span>
                     </div>`;
                 });
                 inner += `</div>`;
